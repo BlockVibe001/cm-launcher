@@ -1,0 +1,68 @@
+{
+  "name": "cm-minecraft-launcher",
+  "version": "1.0.0",
+  "description": "CM Minecraft Launcher - 离线/正版双登录",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win"
+  },
+  "author": "CM",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "extract-zip": "^2.0.1"
+  },
+  "build": {
+    "appId": "com.cm.blockvibe.launcher",
+    "productName": "CM Minecraft Launcher",
+    "copyright": "MIT License · CM",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/tools",
+        "to": "tools"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CM 启动器",
+      "artifactName": "CM-Launcher-${version}-setup.exe"
+    },
+    "portable": {
+      "artifactName": "CM-Launcher-${version}-portable.exe"
+    }
+  }
+}

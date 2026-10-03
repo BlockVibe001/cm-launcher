@@ -1,0 +1,39 @@
+EasyTier（内置组件）
+================================
+
+本目录下的二进制文件随启动器一起分发，用来提供「EasyTier 联机」组网功能。
+启动器只把 easytier-core.exe 当作独立子进程调用（命令行参数 + 本机 RPC 接口），
+不修改二进制，也不把它链接进启动器代码，属于聚合分发。
+
+版权与来源
+----------
+EasyTier
+仓库：https://github.com/EasyTier/EasyTier
+官网：https://easytier.cn/
+源码（对应版本）：https://github.com/EasyTier/EasyTier/tree/v2.6.4
+许可证：LGPL-3.0（GNU Lesser General Public License v3.0），原文见同目录 LICENSE.txt
+
+按 LGPL-3.0 的要求，这里一并给出：
+  - 版权声明：EasyTier © EasyTier 项目组及贡献者
+  - 许可证原文：LICENSE.txt（未经修改）
+  - 获取源码的方式：上面的仓库地址，标签 v2.6.4 即为本目录二进制对应的源码
+如需替换为本目录二进制的修改版，用户可自行编译并替换，启动器不做任何校验或锁定。
+
+文件清单
+--------
+easytier-core.exe   核心节点程序，官方 Windows x86_64 构建，未做任何修改
+easytier-cli.exe    配套命令行工具，用来读取节点 / 对端 / 路由状态
+wintun.dll          Wintun 驱动，创建虚拟网卡（TUN）必需
+WinDivert64.sys     EasyTier 随包附带的网络过滤驱动
+Packet.dll          WinDivert 配套运行库
+
+内置版本：v2.6.4
+下载来源：https://github.com/EasyTier/EasyTier/releases/download/v2.6.4/easytier-windows-x86_64-v2.6.4.zip
+
+用法说明
+--------
+房主（建网）：以管理员身份启动 easytier-core，创建虚拟网卡并占用虚拟 IP 10.126.126.1，
+  之后游戏里「对局域网开放」，加入方就能用 10.126.126.1:25565 直接连进来。
+加入方：以 --no-tun 模式启动（不需要管理员），再用 --port-forward 把本机
+  127.0.0.1:25565 转发到 10.126.126.1:25565，游戏里连 localhost:25565 即可。
+双方需要填相同的网络名 / 网络密钥，并且至少有一个相同的公共共享节点用于互相发现。

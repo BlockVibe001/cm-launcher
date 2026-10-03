@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data: file:; media-src file: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>BlockVibe Launcher</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 背景光斑层（液态玻璃的折射底衬） -->
+  <div class="bg-layer" aria-hidden="true">
+    <img class="bg-media" id="bg-image" alt="" hidden>
+    <video class="bg-media" id="bg-video" muted loop playsinline hidden></video>
+    <i></i><i></i><i></i><i></i>
+    <div class="bg-grid"></div>
+  </div>
+
+  <div class="app">
+    <!-- 顶栏：logo + 搜索 + 启动 + 用户 -->
+    <header class="topbar">
+      <div class="topbar-drag"></div>
+      <div class="brand">
+        <div class="brand-cube"></div>
+        <div class="brand-text">
+          <div class="brand-name">BlockVibe <span>Launcher</span></div>
+          <div class="brand-sub">方块之心，随你出发</div>
+        </div>
+      </div>
+
+      <div class="topbar-search">
+        <span class="search-ico">⌕</span>
+        <input id="top-search" type="text" placeholder="搜索…" autocomplete="off">
+        <kbd>Ctrl K</kbd>
+      </div>
+
+      <div class="topbar-right">
+        <button class="win-btn" id="top-browser" type="button" title="内置浏览器 · MC 百科 / 找资源 / 登录" style="font-size:16px">🌐</button>
+        <button class="btn-launch-mini" id="top-launch" type="button">▶ 启动</button>
+        <div class="user-chip" id="top-user" title="点击前往账号页">
+          <div class="user-avatar" id="top-avatar">👤</div>
+          <div class="user-meta">
+            <div class="user-name" id="top-username">未登录</div>
+            <div class="user-type" id="top-usertype">点击登录</div>
+          </div>
+        </div>
+        <div class="win-controls">
+          <button class="win-btn" id="win-min" type="button" title="最小化">—</button>
+          <button class="win-btn" id="win-max" type="button" title="最大化">▢</button>
+          <button class="win-btn close" id="win-close" type="button" title="关闭">✕</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-row">
+      <!-- 左侧导航 -->
+      <nav class="sidenav">
+        <button class="nav-item active" data-page="home" type="button">
+          <span class="nav-ico">⌂</span><span class="nav-label">首页</span>
+        </button>
+        <button class="nav-item" data-page="instances" type="button">
+          <span class="nav-ico">▣</span><span class="nav-label">实例管理</span>
+        </button>
+        <button class="nav-item" data-page="versions" type="button">
+          <span class="nav-ico">▦</span><span class="nav-label">版本管理</span>
+        </button>
+        <button class="nav-item" data-page="center" type="button">
+          <span class="nav-ico">✿</span><span class="nav-label">资源中心</span>
+        </button>
+        <button class="nav-item" data-page="servers" type="button">
+          <span class="nav-ico">☷</span><span class="nav-label">联机大厅</span>
+        </button>
+        <button class="nav-item" data-page="lab" type="button">
+          <span class="nav-ico">⚗</span><span class="nav-label">Axolotl 实验室</span>
+        </button>
+        <button class="nav-item" data-page="account" type="button">
+          <span class="nav-ico">♟</span><span class="nav-label">账号中心</span>
+        </button>
+        <button class="nav-item" data-page="skins" type="button">
+          <span class="nav-ico">❀</span><span class="nav-label">皮肤中心</span>
+        </button>
+        <button class="nav-item" data-page="downloads" type="button">
+          <span class="nav-ico">⇩</span><span class="nav-label">下载与日志</span>
+        </button>
+        <button class="nav-item" data-page="settings" type="button">
+          <span class="nav-ico">⚙</span><span class="nav-label">设置</span>
+        </button>
+
+        <div class="sidenav-foot">
+          <div class="foot-status"><span class="dot"></span> v1.0.0 · 运行正常</div>
+          <div class="foot-license">MIT License · 独立项目</div>
+        </div>
+      </nav>
+
+      <!-- 内容区 -->
+      <main class="content" id="content">
+        <!-- 页面由 JS 动态渲染 -->
+      </main>
+    </div>
+  </div>
+
+  <!-- 拖拽导入遮罩 -->
+  <div class="drop-overlay" id="drop-overlay" hidden>
+    <div class="drop-box">
+      <div class="drop-ico">📥</div>
+      <div class="drop-title">松开鼠标，智能导入</div>
+      <div class="drop-sub">模组 · 资源包 · 光影 · 数据包 · 世界 · 整合包 · 投影</div>
+    </div>
+  </div>
+
+  <!-- 全屏加载遮罩 -->
+  <div class="global-loading" id="global-loading" hidden>
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">加载中…</div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="glass-motion.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

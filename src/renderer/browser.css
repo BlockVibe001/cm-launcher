@@ -1,0 +1,197 @@
+/* 内置浏览器窗口专用布局；配色一律复用 styles.css 里的主题变量 */
+
+.bw-body { overflow: hidden; }
+
+.bw {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- 标签栏（兼拖拽区） ---------- */
+
+.bw-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 44px;
+  height: 44px;
+  padding: 0 6px 0 10px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.bw-drag { position: absolute; inset: 0; -webkit-app-region: drag; }
+.bw-head > * { position: relative; z-index: 1; }
+
+.bw-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.bw-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 190px;
+  min-width: 62px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur), color var(--dur);
+}
+
+.bw-tab:hover { color: var(--text); }
+.bw-tab.on { background: var(--bg-3); border-color: var(--border-light); color: var(--text); }
+
+.bw-tab-t {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bw-tab-x {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border-radius: 4px;
+  opacity: .55;
+}
+.bw-tab-x:hover { opacity: 1; background: rgba(128, 128, 128, .25); }
+
+.bw-tab-load {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bw-pulse 1s ease-in-out infinite;
+}
+
+@keyframes bw-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+
+.bw-spacer { flex: 1; -webkit-app-region: drag; }
+.bw-winbtns { display: flex; height: 32px; -webkit-app-region: no-drag; }
+
+/* ---------- 通用小按钮 ---------- */
+
+.bw-icon {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur), color var(--dur);
+}
+
+.bw-icon:hover { background: var(--bg-3); color: var(--text); }
+.bw-icon:disabled { opacity: .3; cursor: default; background: transparent; }
+
+/* ---------- 地址栏 ---------- */
+
+.bw-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+
+#bw-url {
+  flex: 1;
+  height: 32px;
+  min-width: 120px;
+  font-size: 13px;
+  user-select: text;
+}
+
+#bw-mode {
+  flex: 0 0 auto;
+  width: 172px;
+  height: 32px;
+  font-size: 12px;
+}
+
+/* ---------- 收藏栏 ---------- */
+
+.bw-marks {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 5px 10px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border);
+}
+
+.bw-marks:empty { display: none; }
+
+.bw-mark {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur), border-color var(--dur);
+}
+
+.bw-mark:hover { color: var(--text); border-color: var(--border-light); }
+
+/* ---------- 网页视图 ---------- */
+
+.bw-views {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+.bw-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bw-view[hidden] { display: none; }
+
+/* ---------- 提示 ---------- */
+
+.bw-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  max-width: 460px;
+  padding: 10px 14px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .8);
+}

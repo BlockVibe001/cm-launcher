@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist_release/
+release/
+*.log
+shot-*.png

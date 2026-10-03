@@ -1,0 +1,27 @@
+陶瓦联机 Terracotta（内置组件）
+================================
+
+本目录下的二进制文件随启动器一起分发，用来提供「陶瓦联机」开房 / 加入房间功能。
+
+版权与来源
+----------
+Terracotta | 陶瓦联机
+作者：Burning_TNT
+仓库：https://github.com/burningtnt/Terracotta
+镜像：https://gitee.com/burningtnt/Terracotta
+
+许可证：AGPL-3.0-or-later，附例外条款
+  - 例外条款①：允许把「未经修改的二进制」打包分发，而不受 AGPL 传染。
+  - 例外条款②：通过其进程间通信接口（本机 HTTP API）交互时，
+    必须在调用方界面明显处标识其版权信息（启动器已在联机页署名）。
+
+文件清单
+--------
+terracotta-0.4.2-windows-x86_64.exe  官方 Windows x86_64 构建，未做任何修改
+VCRUNTIME140.DLL                     Visual C++ 运行库，必须与 exe 同目录
+
+内置版本：v0.4.2
+配套 EasyTier：v2.5.0-terracotta.2
+
+启动器只会用官方提供的命令行与 HTTP 接口（--hmcl 拿端口、/state 系列接口收发房间状态），
+不修改二进制，也不改动它的行为。

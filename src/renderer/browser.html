@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src https: data: file:; script-src 'self'; frame-src *; child-src *">
+  <title>CM 浏览器</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="browser.css">
+</head>
+<body class="bw-body">
+  <div class="bw">
+    <!-- 标签栏（兼窗口拖拽区） -->
+    <header class="bw-head">
+      <div class="bw-drag"></div>
+      <div class="bw-tabs" id="bw-tabs"></div>
+      <button class="bw-icon" id="bw-new" type="button" title="新建标签页">＋</button>
+      <div class="bw-spacer"></div>
+      <div class="bw-winbtns">
+        <button class="win-btn" id="bw-min" type="button" title="最小化">—</button>
+        <button class="win-btn" id="bw-max" type="button" title="最大化">▢</button>
+        <button class="win-btn close" id="bw-close" type="button" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <!-- 地址栏 -->
+    <div class="bw-nav">
+      <button class="bw-icon" id="bw-back" type="button" title="后退">‹</button>
+      <button class="bw-icon" id="bw-fwd" type="button" title="前进">›</button>
+      <button class="bw-icon" id="bw-reload" type="button" title="刷新">⟳</button>
+      <button class="bw-icon" id="bw-home" type="button" title="回到 MC 百科">⌂</button>
+      <input class="input" id="bw-url" placeholder="输入网址或搜索内容，回车访问" spellcheck="false" autocomplete="off">
+      <button class="bw-icon" id="bw-star" type="button" title="收藏 / 取消收藏当前页">☆</button>
+      <select class="input" id="bw-mode" title="从网页下载的东西存到哪里"></select>
+      <button class="bw-icon" id="bw-dir" type="button" title="打开启动器下载目录">⇩</button>
+    </div>
+
+    <!-- 收藏栏 -->
+    <div class="bw-marks" id="bw-marks"></div>
+
+    <!-- 网页视图 -->
+    <div class="bw-views" id="bw-views"></div>
+
+    <div class="bw-toast" id="bw-toast" hidden></div>
+  </div>
+  <script src="browser.js"></script>
+</body>
+</html>
