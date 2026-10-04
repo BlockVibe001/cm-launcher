@@ -12,7 +12,7 @@ mod net;
 mod state;
 mod updater;
 
-use error::CmdResult;
+use error::{AppError, CmdResult};
 use serde_json::{json, Map, Value};
 use tauri::Manager;
 
@@ -271,6 +271,88 @@ fn update_open(url: String) -> CmdResult<()> {
     updater::open_page(&url)
 }
 
+// ================= 实例内容（模组 / 资源包 / 光影 / 存档 / 截图 / 日志） =================
+
+#[tauri::command(rename = "mods:list")]
+fn mods_list(game_dir: String) -> Value {
+    mc::mods::list(&game_dir)
+}
+
+#[tauri::command(rename = "mods:enable")]
+fn mods_enable(game_dir: String, file_name: String, enabled: bool) -> CmdResult<()> {
+    mc::mods::set_enabled(&game_dir, &file_name, enabled).map_err(AppError::Msg)
+}
+
+#[tauri::command(rename = "mods:delete")]
+fn mods_delete(game_dir: String, file_name: String) -> CmdResult<()> {
+    mc::mods::delete(&game_dir, &file_name).map_err(AppError::Msg)
+}
+
+#[tauri::command(rename = "content:resourcepacks")]
+fn content_resource_packs(game_dir: String) -> Value {
+    mc::content::list_resource_packs(&game_dir)
+}
+
+#[tauri::command(rename = "content:resourcepack:toggle")]
+fn content_resource_pack_toggle(game_dir: String, name: String, on: bool) -> Value {
+    mc::content::toggle_resource_pack(&game_dir, &name, on)
+}
+
+#[tauri::command(rename = "content:shaders")]
+fn content_shaders(game_dir: String) -> Value {
+    mc::content::list_shader_packs(&game_dir)
+}
+
+#[tauri::command(rename = "content:shader:enable")]
+fn content_shader_enable(game_dir: String, name: String) -> Value {
+    mc::content::enable_shader_pack(&game_dir, &name)
+}
+
+#[tauri::command(rename = "content:saves")]
+fn content_saves(game_dir: String) -> Value {
+    mc::content::list_saves(&game_dir)
+}
+
+#[tauri::command(rename = "content:screenshots")]
+fn content_screenshots(game_dir: String) -> Value {
+    mc::content::list_screenshots(&game_dir)
+}
+
+#[tauri::command(rename = "content:logs")]
+fn content_logs(game_dir: String) -> Value {
+    mc::content::list_logs(&game_dir)
+}
+
+#[tauri::command(rename = "content:log:read")]
+fn content_log_read(game_dir: String, rel: String) -> CmdResult<String> {
+    mc::content::read_log_file(&game_dir, &rel, 512 * 1024).map_err(AppError::Msg)
+}
+
+#[tauri::command(rename = "content:delete")]
+fn content_delete(game_dir: String, category: String, name: String) -> CmdResult<()> {
+    mc::content::delete_in_dir(&game_dir, &category, &name).map_err(AppError::Msg)
+}
+
+#[tauri::command(rename = "world:list")]
+fn world_list(game_dir: String) -> Value {
+    mc::world::list_worlds(&game_dir)
+}
+
+#[tauri::command(rename = "world:info")]
+fn world_info(save_dir: String) -> CmdResult<Value> {
+    mc::world::world_info(&save_dir).map_err(AppError::Msg)
+}
+
+#[tauri::command(rename = "world:schema")]
+fn world_schema() -> Value {
+    mc::world::schema()
+}
+
+#[tauri::command(rename = "world:update")]
+fn world_update(save_dir: String, patch: Value) -> CmdResult<Value> {
+    mc::world::update_world(&save_dir, &patch).map_err(AppError::Msg)
+}
+
 // ================= 多人 / 联机 =================
 
 // ---- 服务器 Ping ----
@@ -483,6 +565,22 @@ fn main() {
             update_download,
             update_install,
             update_open,
+            mods_list,
+            mods_enable,
+            mods_delete,
+            content_resource_packs,
+            content_resource_pack_toggle,
+            content_shaders,
+            content_shader_enable,
+            content_saves,
+            content_screenshots,
+            content_logs,
+            content_log_read,
+            content_delete,
+            world_list,
+            world_info,
+            world_schema,
+            world_update,
             server_ping,
             server_ping_all,
             lan_detect,

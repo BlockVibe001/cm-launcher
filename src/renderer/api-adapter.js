@@ -33,7 +33,6 @@
     'wallpaper:live': () => null,
     'ai:providers': () => [],
     'migrate:detect': () => [],
-    'world:schema': () => ({ gamemodes: [], difficulties: [], gamerules: [] }),
   };
 
   const call = (channel, args) => invoke(channel, args).catch((e) => {

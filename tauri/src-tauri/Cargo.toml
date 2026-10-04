@@ -32,6 +32,7 @@ hickory-resolver = { version = "0.25.2", default-features = false, features = ["
 flate2 = "1.1.10"
 tar = "0.4.46"
 sha2 = "0.10.9"
+fastnbt = "2.6"
 
 [profile.release]
 opt-level = 3

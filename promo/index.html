@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CM Minecraft Launcher</title>
+<style>
+  :root{
+    --bg:#070a10;
+    --bg-1:#0d121c;
+    --fg:#eef1f7;
+    --dim:#9aa3b5;
+    --faint:#5b6474;
+    --accent:#22c55e;
+    --accent-2:#16a34a;
+    --glow:rgba(34,197,94,.45);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
+    background:var(--bg);color:var(--fg);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  /* ---- 背景层：深空 + 翡翠辉光 ---- */
+  .backdrop{
+    position:fixed;inset:0;z-index:-2;
+    background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(34,197,94,.10), transparent 60%),
+      radial-gradient(900px 600px at 85% 20%, rgba(34,197,94,.05), transparent 55%),
+      radial-gradient(700px 500px at 15% 80%, rgba(34,197,94,.04), transparent 50%),
+      var(--bg);
+  }
+  .grain{
+    position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.035;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---- 导航 ---- */
+  nav{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:18px 40px;
+    backdrop-filter:blur(20px);
+    background:rgba(7,10,16,.6);
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .brand{font-weight:600;font-size:15px;letter-spacing:.3px}
+  .brand b{color:var(--accent)}
+  nav a{color:var(--dim);text-decoration:none;font-size:13px;transition:color .3s}
+  nav a:hover{color:var(--fg)}
+  .nav-cta{
+    padding:8px 18px;border-radius:999px;
+    background:var(--accent);color:#06210f !important;
+    font-weight:600;font-size:13px;
+    transition:transform .25s,box-shadow .25s;
+  }
+  .nav-cta:hover{transform:translateY(-1px);box-shadow:0 8px 24px var(--glow)}
+
+  /* ---- Hero ---- */
+  .hero{
+    min-height:100svh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;
+    padding:120px 24px 80px;position:relative;
+  }
+  .hero-eyebrow{
+    font-size:13px;letter-spacing:3px;text-transform:uppercase;
+    color:var(--accent);margin-bottom:28px;opacity:0;animation:rise .9s .1s forwards;
+  }
+  .hero h1{
+    font-size:clamp(56px,11vw,150px);
+    font-weight:800;line-height:.95;letter-spacing:-.04em;
+    background:linear-gradient(180deg,#fff 30%,rgba(255,255,255,.55));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+    opacity:0;animation:rise 1s .2s forwards;
+  }
+  .hero h1 .dot{color:var(--accent);-webkit-text-fill-color:var(--accent)}
+  .hero p{
+    margin-top:28px;max-width:620px;
+    font-size:clamp(17px,1.6vw,22px);line-height:1.5;color:var(--dim);
+    opacity:0;animation:rise 1s .4s forwards;
+  }
+  .hero-cta{
+    margin-top:44px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center;
+    opacity:0;animation:rise 1s .6s forwards;
+  }
+  .btn{
+    padding:14px 32px;border-radius:999px;font-size:15px;font-weight:600;
+    text-decoration:none;cursor:pointer;border:none;
+    transition:transform .25s,box-shadow .25s;
+  }
+  .btn-primary{
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    color:#06210f;box-shadow:0 10px 30px var(--glow);
+  }
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 40px var(--glow)}
+  .btn-ghost{
+    background:rgba(255,255,255,.06);color:var(--fg);
+    border:1px solid rgba(255,255,255,.12);
+  }
+  .btn-ghost:hover{background:rgba(255,255,255,.1)}
+
+  .scroll-hint{
+    position:absolute;bottom:36px;left:50%;transform:translateX(-50%);
+    color:var(--faint);font-size:12px;letter-spacing:2px;
+    opacity:0;animation:rise 1s .9s forwards;
+  }
+  .scroll-hint::after{
+    content:'';display:block;width:1px;height:36px;margin:10px auto 0;
+    background:linear-gradient(var(--faint),transparent);animation:bob 2s infinite;
+  }
+
+  @keyframes rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes bob{0%,100%{opacity:.3;transform:scaleY(.7)}50%{opacity:1;transform:scaleY(1)}}
+
+  /* ---- 通用 section ---- */
+  section{
+    max-width:1100px;margin:0 auto;padding:140px 24px;
+    opacity:0;transform:translateY(40px);transition:opacity .9s,transform .9s;
+  }
+  section.in{opacity:1;transform:translateY(0)}
+  .section-tag{
+    font-size:12px;letter-spacing:3px;text-transform:uppercase;
+    color:var(--accent);margin-bottom:18px;
+  }
+  .section-title{
+    font-size:clamp(34px,5vw,56px);font-weight:700;letter-spacing:-.03em;
+    line-height:1.1;margin-bottom:20px;
+  }
+  .section-sub{
+    font-size:clamp(16px,1.4vw,19px);color:var(--dim);
+    max-width:560px;line-height:1.6;
+  }
+
+  /* ---- 特性网格（无卡片，用分割线） ---- */
+  .features{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:0;
+    margin-top:70px;border-top:1px solid rgba(255,255,255,.08);
+  }
+  .feature{
+    padding:40px 28px;border-right:1px solid rgba(255,255,255,.08);
+  }
+  .feature:last-child{border-right:none}
+  .feature-ico{
+    width:44px;height:44px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(34,197,94,.1);color:var(--accent);
+    font-size:22px;margin-bottom:22px;
+  }
+  .feature h3{font-size:19px;font-weight:600;margin-bottom:10px}
+  .feature p{font-size:14px;line-height:1.65;color:var(--dim)}
+
+  /* ---- 数据条 ---- */
+  .stats{
+    display:flex;gap:60px;flex-wrap:wrap;margin-top:80px;
+    padding:40px 0;border-top:1px solid rgba(255,255,255,.08);
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .stat .num{
+    font-size:clamp(36px,5vw,56px);font-weight:800;letter-spacing:-.03em;
+    background:linear-gradient(135deg,var(--accent),#86efac);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .stat .lbl{font-size:14px;color:var(--faint);margin-top:6px}
+
+  /* ---- 特性详情（左右交替） ---- */
+  .detail{
+    display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;
+    margin-top:120px;
+  }
+  .detail.reverse .detail-text{order:2}
+  .detail-text h2{
+    font-size:clamp(28px,4vw,42px);font-weight:700;letter-spacing:-.02em;line-height:1.15;
+    margin-bottom:18px;
+  }
+  .detail-text p{color:var(--dim);font-size:16px;line-height:1.7;margin-bottom:14px}
+  .detail-visual{
+    aspect-ratio:4/3;border-radius:24px;position:relative;overflow:hidden;
+    background:linear-gradient(135deg,var(--bg-1),#0a0e16);
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 40px 100px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .detail-visual::before{
+    content:'';position:absolute;inset:0;
+    background:radial-gradient(500px 300px at 70% 30%,rgba(34,197,94,.15),transparent 60%);
+  }
+  /* 模拟界面装饰 */
+  .mock-title{position:absolute;top:24px;left:28px;color:var(--faint);font-size:13px;letter-spacing:1px}
+  .mock-bar{position:absolute;top:54px;left:28px;right:28px;height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+  .mock-bar i{display:block;height:100%;width:62%;background:linear-gradient(90deg,var(--accent),var(--accent-2));border-radius:3px}
+  .mock-cards{position:absolute;top:90px;left:28px;right:28px;display:flex;flex-direction:column;gap:12px}
+  .mock-card{height:44px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05)}
+  .mock-card:nth-child(2){width:78%}
+  .mock-card:nth-child(3){width:90%}
+  .mock-glow{
+    position:absolute;bottom:30px;right:30px;width:120px;height:120px;border-radius:50%;
+    background:radial-gradient(circle,rgba(34,197,94,.35),transparent 70%);filter:blur(20px);
+  }
+
+  /* ---- 最终 CTA ---- */
+  .final{
+    text-align:center;padding:160px 24px 200px;
+  }
+  .final h2{
+    font-size:clamp(40px,7vw,80px);font-weight:800;letter-spacing:-.04em;line-height:1;
+    margin-bottom:24px;
+    background:linear-gradient(180deg,#fff,rgba(255,255,255,.6));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .final p{color:var(--dim);font-size:18px;margin-bottom:44px}
+  .final .btn{font-size:17px;padding:18px 44px}
+  .final .note{margin-top:28px;font-size:13px;color:var(--faint)}
+
+  footer{
+    text-align:center;padding:40px 24px;color:var(--faint);font-size:13px;
+    border-top:1px solid rgba(255,255,255,.06);
+  }
+  footer a{color:var(--dim);text-decoration:none}
+  footer a:hover{color:var(--fg)}
+
+  @media(max-width:768px){
+    nav{padding:14px 20px}
+    .features{grid-template-columns:1fr}
+    .feature{border-right:none;border-bottom:1px solid rgba(255,255,255,.08)}
+    .feature:last-child{border-bottom:none}
+    .detail{grid-template-columns:1fr;gap:40px}
+    .detail.reverse .detail-text{order:0}
+    .stats{gap:32px}
+  }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+<div class="grain"></div>
+
+<nav>
+  <div class="brand">CM <b>Minecraft</b> Launcher</div>
+  <a href="#features">特性</a>
+  <a href="#download" class="nav-cta">下载</a>
+</nav>
+
+<!-- ===== Hero ===== -->
+<header class="hero">
+  <div class="hero-eyebrow">Tauri 2 · 下一代 Minecraft 启动器</div>
+  <h1>轻得<span class="dot">·</span><br>快得<span class="dot">·</span>联机</h1>
+  <p>告别 Electron 的臃肿。CM Launcher 用 Tauri 2 重写，内存占用降到极致，联机、模组、自动更新一应俱全。</p>
+  <div class="hero-cta">
+    <a href="#download" class="btn btn-primary">立即下载</a>
+    <a href="#features" class="btn btn-ghost">了解更多</a>
+  </div>
+  <div class="scroll-hint">向下滚动</div>
+</header>
+
+<!-- ===== 特性概览 ===== -->
+<section id="features">
+  <div class="section-tag">核心能力</div>
+  <h2 class="section-title">为联机而生的<br>启动器体验</h2>
+  <p class="section-sub">从服务器 Ping 到陶瓦 / EasyTier 联机，从 Forge 到 Fabric，开箱即用，无需折腾。</p>
+
+  <div class="features">
+    <div class="feature">
+      <div class="feature-ico">⚡</div>
+      <h3>极致轻量</h3>
+      <p>Tauri 2 + 系统 WebView2，告别 Chromium 多进程，内存占用相比 Electron 大幅下降。</p>
+    </div>
+    <div class="feature">
+      <div class="feature-ico">🌐</div>
+      <h3>全栈联机</h3>
+      <p>服务器实时 Ping、陶瓦联机、EasyTier 点对点、UPnP 端口映射、公网 IPv6，全部内置。</p>
+    </div>
+    <div class="feature">
+      <div class="feature-ico">🔧</div>
+      <h3>一键装模组</h3>
+      <p>Forge / NeoForge / Fabric / Quilt 四合一安装器，版本自动解析，告别手动找依赖。</p>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num">~20MB</div><div class="lbl">安装包体积</div></div>
+    <div class="stat"><div class="num">4</div><div class="lbl">内置联机方案</div></div>
+    <div class="stat"><div class="num">20s</div><div class="lbl">平均冷启动</div></div>
+  </div>
+</section>
+
+<!-- ===== 特性详情 1 ===== -->
+<section>
+  <div class="detail">
+    <div class="detail-text">
+      <div class="section-tag">联机</div>
+      <h2>想和朋友联机？<br>三步搞定。</h2>
+      <p>内置陶瓦（Terracotta）与 EasyTier，无需公网 IP，无需端口转发。一个房间号，立刻开黑。</p>
+      <p>服务器列表实时显示延迟、人数、MOTD 与图标，加服前心里有数。</p>
+    </div>
+    <div class="detail-visual">
+      <div class="mock-title">服务器列表</div>
+      <div class="mock-bar"><i></i></div>
+      <div class="mock-cards">
+        <div class="mock-card"></div>
+        <div class="mock-card"></div>
+        <div class="mock-card"></div>
+      </div>
+      <div class="mock-glow"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 特性详情 2 ===== -->
+<section>
+  <div class="detail reverse">
+    <div class="detail-text">
+      <div class="section-tag">更新</div>
+      <h2>新版本？<br>启动器自己装。</h2>
+      <p>内置自更新：启动时后台静默检查，发现新版一键下载，SHA256 校验后静默安装，无需手动跑安装程序。</p>
+      <p>更新清单托管于 GitHub Release，永远指向最新版。</p>
+    </div>
+    <div class="detail-visual">
+      <div class="mock-title">软件更新</div>
+      <div class="mock-bar"><i></i></div>
+      <div class="mock-cards">
+        <div class="mock-card"></div>
+        <div class="mock-card"></div>
+      </div>
+      <div class="mock-glow"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 最终 CTA ===== -->
+<section id="download" class="final">
+  <div class="section-tag">免费 · 开源</div>
+  <h2>现在就<br>开始冒险。</h2>
+  <p>Windows 10 1809+ · 约 20 MB · 免管理员安装</p>
+  <a href="https://github.com/BlockVibe001/cm-launcher/releases/latest/download/CM.Minecraft.Launcher_1.0.5_x64-setup.exe" class="btn btn-primary">下载 CM Minecraft Launcher</a>
+  <div class="note">
+    或访问 <a href="https://github.com/BlockVibe001/cm-launcher/releases/latest" target="_blank">GitHub Release 页面</a>
+  </div>
+</section>
+
+<footer>
+  <div>CM Minecraft Launcher · 基于 <a href="https://tauri.app" target="_blank">Tauri 2</a> 构建</div>
+  <div style="margin-top:8px"><a href="https://github.com/BlockVibe001/cm-launcher" target="_blank">GitHub</a> · 开源免费</div>
+</footer>
+
+<script>
+  // 滚动入场
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+  },{threshold:.15});
+  document.querySelectorAll('section').forEach(s=>io.observe(s));
+
+  // 导航下载按钮也可直接跳
+  document.querySelectorAll('a[href^="#"]').forEach(a=>{
+    a.addEventListener('click',e=>{
+      const id=a.getAttribute('href').slice(1);
+      const el=document.getElementById(id);
+      if(el){ e.preventDefault(); el.scrollIntoView({behavior:'smooth'}); }
+    });
+  });
+</script>
+</body>
+</html>
