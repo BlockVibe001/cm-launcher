@@ -6840,6 +6840,10 @@ function renderTranslateTool(box) {
 
 /* ========== 启动器自更新 ========== */
 
+// 官方更新清单地址（GitHub latest 路由，永远指向最新版）。
+// 用户未自定义时所有入口都回退到此地址。
+const DEFAULT_UPDATE_URL = 'https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json';
+
 // 检查到的新版清单；null = 无新版 / 还没查过。顶栏红点与首页徽章都读它。
 let pendingUpdate = null;
 
@@ -6868,14 +6872,15 @@ function openUpdateSettings() {
  */
 async function checkUpdate(silent = false) {
   const up = (state.config && state.config.update) || {};
-  if (!up.url) {
-    if (!silent) toast('还没填更新地址', true);
-    return null;
-  }
+  const url = up.url || DEFAULT_UPDATE_URL;
   try {
-    const res = await api.updaterCheck(up.url);
+    const res = await api.updaterCheck(url);
     pendingUpdate = res.hasUpdate ? res : null;
     paintUpdateDot();
+    // 记录检查时间，供 6 小时节流使用
+    if (silent) {
+      api.configUpdate({ update: { ...up, lastCheckAt: Date.now() } });
+    }
     if (!silent) toast(res.hasUpdate ? `发现新版本 v${res.latest}` : '已是最新版');
     return res;
   } catch (e) {
@@ -6887,7 +6892,7 @@ async function checkUpdate(silent = false) {
 /** 6 小时内查过就跳过，免得每开一次启动器都去敲一遍服务器 */
 async function autoCheckUpdate() {
   const up = (state.config && state.config.update) || {};
-  if (up.autoCheck === false || !up.url) return;
+  if (up.autoCheck === false) return;
   if (Date.now() - Number(up.lastCheckAt || 0) < 6 * 3600 * 1000) return;
   await checkUpdate(true);
 }
@@ -7190,7 +7195,7 @@ function renderSettings(page) {
       <div class="field">
         <label>更新地址</label>
         <input class="input" id="up-url" placeholder="https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json">
-        <div class="hint-text">JSON 需含 version 与 installer，可选 notes / publishedAt / sha256 / page。留空则不检查。当前版本 <b id="up-cur">—</b>。</div>
+        <div class="hint-text">JSON 需含 version 与 installer，可选 notes / publishedAt / sha256 / page。留空则使用官方地址。当前版本 <b id="up-cur">—</b>。</div>
       </div>
       <label class="ui-check"><input type="checkbox" id="up-auto"> 启动时自动检查更新（6 小时内只查一次）</label>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">
@@ -7522,7 +7527,7 @@ function renderSettings(page) {
 
   // ========== 更新 ==========
   const up = state.config.update || {};
-  $('up-url').value = up.url || 'https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json';
+  $('up-url').value = up.url || DEFAULT_UPDATE_URL;
   $('up-auto').checked = up.autoCheck !== false;
   $('up-cur').textContent = `v${(state.updateInfo || {}).version || '1.0.0'}`;
 
@@ -7545,12 +7550,13 @@ function renderSettings(page) {
     const url = $('up-url').value.trim();
     await api.configUpdate({ update: { url, autoCheck: $('up-auto').checked } });
     state.config = await api.configGetAll();
-    toast(url ? '更新设置已保存' : '已清空更新地址，不再检查更新');
+    // 清空地址会回退到官方默认地址，所以一律按"已保存"反馈
+    $('up-url').value = url || DEFAULT_UPDATE_URL;
+    toast('更新设置已保存');
   };
 
   $('up-check').onclick = async () => {
-    const url = $('up-url').value.trim();
-    if (!url) return toast('请先填写更新地址', true);
+    const url = $('up-url').value.trim() || DEFAULT_UPDATE_URL;
     const btn = $('up-check');
     btn.disabled = true;
     btn.textContent = '检查中…';
