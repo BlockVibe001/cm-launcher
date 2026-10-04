@@ -46,6 +46,44 @@ async function installForge(mcVersion, forgeVersion, gameDir, javaPath, onProgre
 }
 
 /**
+ * 获取 NeoForge 可用版本列表（BMCLAPI 提供按 MC 版本过滤的清单）
+ */
+async function getNeoForgeVersions(mcVersion) {
+  const url = `https://bmclapi2.bangbang93.com/neoforge/list/${encodeURIComponent(mcVersion)}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'CM-Launcher' } });
+  if (!res.ok) throw new Error(`获取 NeoForge 版本列表失败 (HTTP ${res.status})`);
+  const list = await res.json();
+  return list.map((v) => ({
+    mcVersion: v.mcversion,
+    version: v.version,
+  }));
+}
+
+/**
+ * 安装 NeoForge：与 Forge 同套路，下载 installer.jar 后 java --installClient。
+ * 安装器走 BMCLAPI 的 maven 镜像。
+ */
+async function installNeoForge(mcVersion, neoVersion, gameDir, javaPath, onProgress) {
+  if (!javaPath) throw new Error('安装 NeoForge 需要 Java，请在设置中指定 java.exe');
+
+  const installerUrl = `https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/${neoVersion}/neoforge-${neoVersion}-installer.jar`;
+  const installerFile = path.join(gameDir, `neoforge-${mcVersion}-${neoVersion}-installer.jar`);
+  fs.mkdirSync(gameDir, { recursive: true });
+
+  if (onProgress) onProgress({ step: '下载 NeoForge 安装器…', percent: 10 });
+  await downloadFile(installerUrl, installerFile, null);
+
+  if (onProgress) onProgress({ step: '运行 NeoForge 安装器…', percent: 30 });
+  await runJar(javaPath, [installerFile, '--installClient', '--gameDir', gameDir], gameDir, onProgress, 30, 90);
+
+  try { fs.unlinkSync(installerFile); } catch { /* 忽略 */ }
+  if (onProgress) onProgress({ step: 'NeoForge 安装完成', percent: 100 });
+
+  // NeoForge 安装器生成的版本 id
+  return `neoforge-${neoVersion}`;
+}
+
+/**
  * Fabric：直接从 meta API 拉取完整 version.json，无需安装器
  */
 async function getFabricLoaders() {
@@ -110,6 +148,7 @@ function runJar(javaPath, args, cwd, onProgress, fromPct, toPct) {
 
 module.exports = {
   getForgeVersions, installForge,
+  getNeoForgeVersions, installNeoForge,
   getFabricLoaders, installFabric,
   getQuiltLoaders, installQuilt,
 };

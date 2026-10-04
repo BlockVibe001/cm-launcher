@@ -2,14 +2,38 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const extractZip = require('extract-zip');
+const config = require('../config');
 const { downloadFile } = require('./downloader');
 const { mirrorUrl } = require('./mirror');
 
-const MR_API = 'https://api.modrinth.com/v2';
+/* Modrinth API：官方在国内直连不稳，配 MCIM 镜像（PCL2 同款）做兜底。
+   开了 BMCL 镜像的用户优先走 MCIM；官方优先时失败也会回落到 MCIM。 */
+const MR_OFFICIAL = 'https://api.modrinth.com/v2';
+const MR_MCIM = 'https://mod.mcimirror.top/modrinth/v2';
+
 const HEADERS = {
   'User-Agent': 'CM-Launcher (https://github.com/cm)',
   'Accept': 'application/json',
 };
+
+function mrBases() {
+  return config.get('mirror') === 'bmcl' ? [MR_MCIM, MR_OFFICIAL] : [MR_OFFICIAL, MR_MCIM];
+}
+
+/** 依次尝试各 API 源，全部失败才抛错。 */
+async function mrFetch(path) {
+  let lastErr;
+  for (const base of mrBases()) {
+    try {
+      const res = await fetch(base + path, { headers: HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`Modrinth 请求失败：${lastErr && lastErr.message}`);
+}
 
 /* 各类型资源的落地目录（相对游戏目录） */
 const TYPE_DIRS = {
@@ -25,19 +49,25 @@ const TYPE_DIRS = {
  * @param projectType mod | modpack | shader | resourcepack | datapack
  */
 async function searchMods(query, mcVersion, modLoader, limit = 20, projectType = 'mod') {
-  const facets = [`["project_type:${projectType}"]`];
-  if (mcVersion) facets.push(`["versions:${mcVersion}"]`);
-  // loader 分类仅对模组有意义（光影走 iris/optifine 分类时同样可用）
-  if (modLoader && modLoader !== 'vanilla') facets.push(`["categories:${modLoader}"]`);
+  const buildFacets = (withVersion) => {
+    const facets = [`["project_type:${projectType}"]`];
+    if (withVersion && mcVersion) facets.push(`["versions:${mcVersion}"]`);
+    // loader 分类仅对模组有意义（光影走 iris/optifine 分类时同样可用）
+    if (modLoader && modLoader !== 'vanilla') facets.push(`["categories:${modLoader}"]`);
+    return `[${facets.join(',')}]`;
+  };
 
-  const params = new URLSearchParams({
+  const search = (facets) => mrFetch(`/search?${new URLSearchParams({
     query: query || '',
     limit: String(limit),
-    facets: `[${facets.join(',')}]`,
-  });
-  const res = await fetch(`${MR_API}/search?${params}`, { headers: HEADERS });
-  if (!res.ok) throw new Error(`Modrinth 搜索失败 (HTTP ${res.status})`);
-  const data = await res.json();
+    facets,
+  })}`);
+
+  let data = await search(buildFacets(true));
+  // Modrinth 的 versions 面片对裸 1.X（如 1.20）匹配不到任何项目，0 结果时去掉版本过滤重搜
+  if (mcVersion && !(data.total_hits > 0)) {
+    data = await search(buildFacets(false));
+  }
   return (data.hits || []).map((h) => ({
     id: h.project_id || h.slug,
     name: h.title,
@@ -53,12 +83,17 @@ async function searchMods(query, mcVersion, modLoader, limit = 20, projectType =
 }
 
 async function getVersions(projectId, mcVersion, modLoader) {
-  const params = new URLSearchParams();
-  if (mcVersion) params.set('game_versions', JSON.stringify([mcVersion]));
-  if (modLoader && modLoader !== 'vanilla') params.set('loaders', JSON.stringify([modLoader]));
-  const res = await fetch(`${MR_API}/project/${projectId}/version?${params}`, { headers: HEADERS });
-  if (!res.ok) throw new Error(`获取版本失败 (HTTP ${res.status})`);
-  const data = await res.json();
+  const fetchVersions = (withVersion) => {
+    const params = new URLSearchParams();
+    if (withVersion && mcVersion) params.set('game_versions', JSON.stringify([mcVersion]));
+    if (modLoader && modLoader !== 'vanilla') params.set('loaders', JSON.stringify([modLoader]));
+    return mrFetch(`/project/${projectId}/version?${params}`);
+  };
+  let data = await fetchVersions(true);
+  // 同搜索：裸 1.X 匹配不到时去掉版本过滤重试
+  if (mcVersion && (!Array.isArray(data) || data.length === 0)) {
+    data = await fetchVersions(false);
+  }
   return (data || []).map((v) => ({
     id: v.id,
     name: v.name,
@@ -171,4 +206,10 @@ function copyDirRecursive(src, dest) {
   }
 }
 
-module.exports = { searchMods, getVersions, downloadMod, installMrpack };
+/** 取项目基本信息（前置模组解析名字用） */
+async function getProject(projectId) {
+  const p = await mrFetch(`/project/${projectId}`);
+  return { id: p.id || p.slug, title: p.title, slug: p.slug, icon: p.icon_url || '' };
+}
+
+module.exports = { searchMods, getVersions, getProject, downloadMod, installMrpack };

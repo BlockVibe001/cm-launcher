@@ -5,8 +5,8 @@ const { spawn } = require('child_process');
 const config = require('../config');
 const logger = require('../logger');
 const { matchesRules } = require('./rules');
-const { getManifest, getVersionDetail } = require('./versions');
-const { prepareGame, CanceledError } = require('./downloader');
+const { resolveVersionDetail } = require('./versions');
+const { prepareGame, CanceledError, mavenLibPath } = require('./downloader');
 const { listJavas, pickFor, requiredJava } = require('./java');
 const microsoftAuth = require('../auth/microsoft');
 const yggdrasilAuth = require('../auth/yggdrasil');
@@ -40,13 +40,6 @@ function filterArgs(args, features) {
   return out;
 }
 
-async function resolveVersionDetail(versionId) {
-  const manifest = await getManifest();
-  const entry = manifest.versions.find((v) => v.id === versionId);
-  if (!entry) throw new Error(`版本清单中找不到版本：${versionId}`);
-  return getVersionDetail(entry);
-}
-
 /** quickPlay 参数仅 1.20+ 支持 */
 function supportsQuickPlay(versionId) {
   const m = /^1\.(\d+)/.exec(String(versionId));
@@ -68,6 +61,10 @@ function boostedMax(configured) {
 function boostArgs() {
   return [
     '-XX:+UseG1GC',
+    // G1NewSizePercent / G1MaxNewSizePercent 在 JDK8/9 上是实验性选项，
+    // 不解锁直接报「must be enabled via -XX:+UnlockExperimentalVMOptions」，JVM 直接退出（退出码1）。
+    // 必须放在它们前面；高版本 JDK 上该开关无副作用。
+    '-XX:+UnlockExperimentalVMOptions',
     '-XX:+ParallelRefProcEnabled',
     '-XX:MaxGCPauseMillis=200',
     '-XX:+DisableExplicitGC',
@@ -105,7 +102,14 @@ function buildLaunchArgs(vj, gameDir, account, opts = {}) {
   for (const lib of vj.libraries || []) {
     if (lib.rules && !matchesRules(lib.rules)) continue;
     const art = lib.downloads && lib.downloads.artifact;
-    if (art) cpList.push(path.join(librariesDir, art.path));
+    if (art) {
+      cpList.push(path.join(librariesDir, art.path));
+      continue;
+    }
+    // Fabric/Quilt 式：库没有 downloads.artifact，只有 maven 坐标 —— 按坐标算路径。
+    // 漏了它 fabric-loader 不在 classpath 上，JVM 报「找不到或无法加载主类 KnotClient」。
+    const rel = mavenLibPath(lib.name || '');
+    if (rel) cpList.push(path.join(librariesDir, rel));
   }
   cpList.push(path.join(versionsDir, `${vj.id}.jar`));
   const cpSep = process.platform === 'win32' ? ';' : ':';
@@ -221,7 +225,7 @@ async function launch(instanceId, send, extra) {
   fs.mkdirSync(gameDir, { recursive: true });
 
   logger.info(`启动实例「${instance.name}」，版本：${instance.versionId}`);
-  const vj = await resolveVersionDetail(instance.versionId);
+  const vj = await resolveVersionDetail(instance.versionId, gameDir);
 
   // 下载/校验全部游戏文件
   abortController = new AbortController();
@@ -310,4 +314,25 @@ async function launch(instanceId, send, extra) {
   return true;
 }
 
-module.exports = { launch, cancel, isRunning, CanceledError, buildLaunchArgs, boostedMax, boostArgs };
+/**
+ * 只下载 / 校验某个版本的全部游戏文件，不启动游戏。
+ * 首页「下载版本」用它：先落盘，成功了再建实例，失败就不留残实例。
+ * 复用 cancel()，所以界面上的「取消」对下载同样有效。
+ */
+async function prepare(mcVersion, gameDir, send) {
+  const dir = gameDir || config.get('gameDir');
+  fs.mkdirSync(dir, { recursive: true });
+  const vj = await resolveVersionDetail(mcVersion, dir);
+  abortController = new AbortController();
+  try {
+    await prepareGame(vj, dir, {
+      signal: abortController.signal,
+      onProgress: (p) => send && send('download:progress', p),
+    });
+  } finally {
+    abortController = null;
+  }
+  return { id: vj.id };
+}
+
+module.exports = { launch, prepare, cancel, isRunning, CanceledError, buildLaunchArgs, boostedMax, boostArgs };

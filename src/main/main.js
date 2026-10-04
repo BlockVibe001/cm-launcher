@@ -31,6 +31,7 @@ const modUpdate = require('./minecraft/update');
 const packExport = require('./minecraft/export');
 const recipe = require('./minecraft/recipe');
 const seedmap = require('./minecraft/seedmap');
+const seedmapEngine = require('./minecraft/seedmap-engine');
 const schematic = require('./minecraft/schematic');
 const translator = require('./minecraft/translate');
 const memory = require('./system/memory');
@@ -44,6 +45,7 @@ const serverping = require('./minecraft/serverping');
 const lan = require('./minecraft/lan');
 const terracotta = require('./minecraft/terracotta');
 const easytier = require('./minecraft/easytier');
+const updater = require('./minecraft/updater');
 const wallpaper = require('./system/wallpaper');
 const browser = require('./system/browser');
 const { pathToFileURL } = require('url');
@@ -129,6 +131,11 @@ ipcMain.handle('versions:installed', (_e, gameDir) => {
       .map((d) => d.name);
   } catch { return []; }
 });
+
+// 只下载 / 校验版本文件，不启动游戏。首页「下载版本」用它：
+// 先落盘，成功了界面才建实例，失败就不留空壳实例。
+ipcMain.handle('versions:download', (_e, mcVersion, gameDir) =>
+  launcher.prepare(mcVersion, gameDir, send));
 
 // ---------------- Java ----------------
 ipcMain.handle('java:list', () => listJavas());
@@ -311,6 +318,13 @@ ipcMain.handle('lab:slime', (_e, seed, cx0, cz0, w, h) => seedmap.slimeChunks(se
 ipcMain.handle('lab:seedFromSave', (_e, saveDir) => seedmap.seedFromSave(saveDir));
 ipcMain.handle('lab:chunkbase', (_e, seed, version) => seedmap.chunkbaseUrl(seed, version));
 
+ipcMain.handle('lab:seedTile', (_e, payload) => seedmapEngine.tile(payload));
+ipcMain.handle('lab:seedStructs', (_e, payload) => seedmapEngine.structures(payload));
+ipcMain.handle('lab:seedStrongholds', (_e, payload) => seedmapEngine.strongholds(payload));
+ipcMain.handle('lab:seedSpawn', (_e, payload) => seedmapEngine.spawnPoint(payload));
+ipcMain.handle('lab:seedSlime', (_e, payload) => seedmapEngine.slime(payload));
+ipcMain.handle('lab:seedBiome', (_e, payload) => seedmapEngine.biome(payload));
+
 ipcMain.handle('lab:schematicOpen', async (_e, presetPath) => {
   let file = presetPath;
   if (!file) {
@@ -412,6 +426,10 @@ ipcMain.handle('modloader:forge:versions', (_e, mcVersion) => modloaders.getForg
 ipcMain.handle('modloader:forge:install', (_e, mcVersion, forgeVersion, gameDir, javaPath) =>
   modloaders.installForge(mcVersion, forgeVersion, gameDir, javaPath, (p) => send('modloader:progress', p))
 );
+ipcMain.handle('modloader:neoforge:versions', (_e, mcVersion) => modloaders.getNeoForgeVersions(mcVersion));
+ipcMain.handle('modloader:neoforge:install', (_e, mcVersion, neoVersion, gameDir, javaPath) =>
+  modloaders.installNeoForge(mcVersion, neoVersion, gameDir, javaPath, (p) => send('modloader:progress', p))
+);
 ipcMain.handle('modloader:fabric:loaders', () => modloaders.getFabricLoaders());
 ipcMain.handle('modloader:fabric:install', (_e, mcVersion, loaderVersion, gameDir) =>
   modloaders.installFabric(mcVersion, loaderVersion, gameDir, (p) => send('modloader:progress', p))
@@ -436,6 +454,7 @@ ipcMain.handle('search:curseforge:world', (_e, file, gameDir) =>
 ipcMain.handle('search:modrinth', (_e, query, mcVersion, modLoader, projectType) =>
   modrinth.searchMods(query, mcVersion, modLoader, 20, projectType));
 ipcMain.handle('search:modrinth:versions', (_e, projectId, mcVersion, modLoader) => modrinth.getVersions(projectId, mcVersion, modLoader));
+ipcMain.handle('search:modrinth:project', (_e, projectId) => modrinth.getProject(projectId));
 ipcMain.handle('search:modrinth:download', (_e, file, gameDir, projectType) =>
   downloads.track(file.filename || file.name || 'Modrinth 文件', projectType || 'mod', () => modrinth.downloadMod(file, gameDir, projectType)));
 ipcMain.handle('search:modrinth:installpack', async (_e, file, gameRoot) => {
@@ -474,6 +493,12 @@ ipcMain.handle('migrate:detect', () => migrate.detect());
 ipcMain.handle('migrate:detectIn', (_e, dir) => migrate.detectIn(dir));
 ipcMain.handle('migrate:run', (_e, payload) => migrate.run(payload || {}, (p) => send('migrate:progress', p)));
 
+// 全局游戏目录变更（设置页）：游戏运行中禁止，避免移动被占用文件
+ipcMain.handle('gameDir:change', (_e, dir, move) => {
+  if (launcher.isRunning()) throw new Error('游戏正在运行，请先退出游戏再修改游戏目录');
+  return migrate.changeGameDir(dir, !!move);
+});
+
 // ---------------- 皮肤系统 ----------------
 ipcMain.handle('skin:official', (_e, nameOrUuid) => skin.fetchOfficialSkin(nameOrUuid));
 ipcMain.handle('skin:download', (_e, url, label) => skin.downloadSkin(url, label));
@@ -484,6 +509,8 @@ ipcMain.handle('skin:uploadOfficial', (_e, filePath, variant) => skin.uploadOffi
 ipcMain.handle('skin:uploadYggdrasil', (_e, filePath, variant) => skin.uploadYggdrasil(filePath, variant));
 ipcMain.handle('skin:library', (_e, base, query, page) => skin.browseLibrary(base, query, page));
 ipcMain.handle('skin:current', () => skin.currentSkin());
+ipcMain.handle('skin:use', (_e, filePath) => skin.useSkin(filePath));
+ipcMain.handle('skin:history', () => skin.history());
 
 // ---------------- 下载任务队列 ----------------
 downloads.setNotifier((list) => send('downloads:changed', list));
@@ -585,13 +612,51 @@ ipcMain.handle('easytier:join', (_e, opts) => easytier.join({
 ipcMain.handle('easytier:leave', () => easytier.leave());
 app.on('before-quit', () => { easytier.shutdown().catch(() => {}); });
 
+// ---------------- 启动器自更新 ----------------
+// 更新地址由玩家自己在设置页填，清单与安装包都放在那个地址下，不绑定任何第三方更新框架
+ipcMain.handle('update:version', () => ({
+  version: updater.currentVersion(),
+  portable: updater.isPortable(),
+}));
+ipcMain.handle('update:check', async (_e, url) => {
+  const cur = config.get('update') || {};
+  const target = (url && String(url).trim()) || cur.url;
+  const res = await updater.check(target);
+  // 记一次检查时间：启动时的静默检查靠它判断「6 小时内查过就别再查」
+  config.update({ update: { ...cur, lastCheckAt: Date.now() } });
+  return res;
+});
+ipcMain.handle('update:download', (_e, manifest) => updater.download(manifest, (p) => send('update:progress', p)));
+ipcMain.handle('update:install', (_e, p) => {
+  const res = updater.install(p);
+  // 安装包要替换掉正在运行的 exe，所以起完安装进程就得把自己退掉，把文件锁放开
+  setTimeout(() => app.quit(), 400);
+  return res;
+});
+ipcMain.handle('update:open', (_e, url) => {
+  const u = String(url || '').trim();
+  if (!/^https?:\/\//i.test(u)) throw new Error('下载页地址无效，需要以 http:// 或 https:// 开头');
+  // 发布页也收进内置浏览器，不甩系统浏览器
+  browser.open(u);
+  return true;
+});
+
 // ---------------- 内存管理 ----------------
 ipcMain.handle('memory:info', () => memory.getMemoryInfo());
 ipcMain.handle('memory:recommend', () => memory.recommendMemory());
-ipcMain.handle('memory:clean', () => memory.cleanMemory());
+ipcMain.handle('memory:clean', (_e, level) => memory.cleanMemory(level));
 
 // ---------------- 外部打开 ----------------
-ipcMain.handle('shell:open', (_e, url) => shell.openExternal(url));
+ipcMain.handle('shell:open', (_e, url) => {
+  const u = String(url || '').trim();
+  // 网页统一收进启动器内置浏览器：登录态能留住、网页下载也能被接管；
+  // 非 http(s)（file://、mailto: 等）才交给系统默认程序。
+  if (/^https?:\/\//i.test(u)) {
+    browser.open(u);
+    return true;
+  }
+  return shell.openExternal(u);
+});
 ipcMain.handle('shell:openPath', (_e, p) => shell.openPath(p));
 ipcMain.handle('shell:openGameDir', () => {
   const dir = config.get('gameDir');

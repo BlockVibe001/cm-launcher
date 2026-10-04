@@ -12,7 +12,12 @@ async function postForm(url, params) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error_description || data.error || `请求失败 HTTP ${res.status}`);
+    // 把 OAuth 错误码单独挂在 err.code 上：响应里 error_description 是一句英文说明，
+    // 里面并不含 authorization_pending 这类错误码，靠 message 文本匹配会全部漏判。
+    const err = new Error(data.error_description || data.error || `请求失败 HTTP ${res.status}`);
+    err.code = data.error || '';
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -25,7 +30,10 @@ async function postJson(url, body) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.errorMessage || data.message || `请求失败 HTTP ${res.status}`);
+    const err = new Error(data.errorMessage || data.message || `请求失败 HTTP ${res.status}`);
+    err.code = data.error || '';
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -44,7 +52,8 @@ async function getDeviceCode() {
 
 /** ② 轮询等待用户在浏览器中完成授权 */
 async function pollForToken(deviceCode, interval, onStatus) {
-  const pollInterval = Math.max((interval || 5), 3) * 1000;
+  // 服务端返回 slow_down 时要按 OAuth 规范把间隔调大，所以这里用 let
+  let pollInterval = Math.max(Number(interval) || 5, 3) * 1000;
   const deadline = Date.now() + 15 * 60 * 1000; // 最多等 15 分钟
 
   while (Date.now() < deadline) {
@@ -58,21 +67,28 @@ async function pollForToken(deviceCode, interval, onStatus) {
       if (data.access_token) return data;
       // 没拿到 access_token 但没报错，继续轮询
     } catch (e) {
-      const msg = e.message || '';
-      if (msg.includes('authorization_pending')) {
+      const code = e.code || e.message || '';
+      if (code.includes('authorization_pending')) {
         if (onStatus) onStatus('waiting');
         continue;
       }
-      if (msg.includes('authorization_declined')) {
+      if (code.includes('slow_down')) {
+        pollInterval += 5000;      // 按规范每次至少加 5 秒
+        if (onStatus) onStatus('waiting');
+        continue;
+      }
+      if (code.includes('authorization_declined')) {
         throw new Error('你拒绝了授权请求');
       }
-      if (msg.includes('expired_token')) {
+      if (code.includes('expired_token')) {
         throw new Error('设备码已过期，请重新登录');
       }
-      if (msg.includes('bad_verification_code')) {
+      if (code.includes('bad_verification_code')) {
         throw new Error('验证码错误，请重新登录');
       }
-      // 其他错误也继续轮询（网络波动等）
+      // 4xx 且带明确错误码，说明这次请求本身不会被接受，再轮询到超时也没用，直接报错。
+      // 只有网络波动 / 5xx 这类才继续重试。
+      if (e.status && e.status < 500 && e.code) throw new Error(e.message);
       if (onStatus) onStatus('waiting');
     }
   }

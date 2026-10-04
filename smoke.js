@@ -138,6 +138,19 @@ function makeSkinPng(w = 64, h = 32, rgb = [60, 200, 120]) {
 // 本地 HTTP 文件服务（供下载队列测试，避免依赖外网）
 function startLocalHttp(payload) {
   const srv = http.createServer((req, res) => {
+    if (req.url === '/latest.json') {
+      // 更新清单：版本故意高于当前，用来验证「检查更新」的比对与下载通路
+      const body = Buffer.from(JSON.stringify({
+        version: '99.0.0',
+        notes: '冒烟测试用的更新说明',
+        publishedAt: '2026-01-01T00:00:00Z',
+        installer: '/blob.bin',
+        page: '/download',
+      }));
+      res.writeHead(200, { 'Content-Length': String(body.length), 'Content-Type': 'application/json' });
+      res.end(body);
+      return;
+    }
     if (req.url === '/slow') {
       // 慢速流：用于观察下载中的进度条
       res.writeHead(200, { 'Content-Length': String(payload.length), 'Content-Type': 'application/octet-stream' });
@@ -316,7 +329,18 @@ async function run() {
   await sleep(900);
   const cats = ['modpack', 'shader', 'resourcepack', 'datapack', 'world'];
   for (const c of cats) {
-    await js(`document.querySelector('.cat-tab[data-cat="${c}"]').click()`);
+    // 分类走网络（CurseForge 403 时某些分类可能整块不渲染），点不到就跳过并记下来，
+    // 别让 null.click() 把整轮冒烟打断 —— 后面的批次都还没跑。
+    const ok = await js(`(() => {
+      const t = document.querySelector('#cat-bar .cat-tab[data-cat="${c}"]');
+      if (!t) return false;
+      t.click();
+      return true;
+    })()`);
+    if (!ok) {
+      const have = await js(`JSON.stringify([...document.querySelectorAll('#cat-bar .cat-tab')].map((x) => x.dataset.cat))`);
+      console.log(`center 分类缺失 ${c}（当前分类栏：${have}）`);
+    }
     await sleep(3500);
     await shot(`center-${c}`);
   }
@@ -473,6 +497,49 @@ async function run() {
   try { await js(`api.skinReadLocal(${JSON.stringify(badPng)})`); } catch { guarded = true; }
   if (!guarded) skinBad++;
   console.log(`skin 尺寸校验 ${guarded ? 'OK ' : 'BAD'}`);
+
+  // ④ 最近使用 + 切账号皮肤跟随
+  const beforeCfg = await js(`api.configGetAll()`);
+  const beforeUuid = beforeCfg.account ? beforeCfg.account.uuid : '';
+  const fakeMsUuid = '0600a000000000000000000000000001';
+
+  // 离线账号使用皮肤 → 绑定并进入最近使用
+  await js(`(async () => { state.account = await api.authOffline('SmokeSkin') })()`);
+  await js(`(async () => { await api.skinUse(${JSON.stringify(skinFile)}) })()`);
+  const hist = await js(`api.skinHistory()`);
+  const histOk = hist.length >= 1 && hist[0].path === skinFile;
+  const curOff = await js(`api.skinCurrent()`);
+  const offOk = !!(curOff && curOff.source === 'local');
+
+  // 切到正版：皮肤只能来自服务器，绝不能被离线那张本地皮肤顶替
+  await js(`api.configSet('account', { type:'microsoft', uuid:${JSON.stringify(fakeMsUuid)}, username:'FakeMS', accessToken:'x', skinPath:${JSON.stringify(skinFile)} })`);
+  const curMs = await js(`api.skinCurrent()`);
+  const msOk = !(curMs && curMs.source === 'local');
+
+  // 再回离线：之前绑定的皮肤还在
+  await js(`(async () => { state.account = await api.authOffline('SmokeSkin') })()`);
+  const curBack = await js(`api.skinCurrent()`);
+  const backOk = !!(curBack && curBack.source === 'local');
+
+  // 界面：最近使用面板要渲染出刚用过的皮肤
+  await js(`renderPage('skins')`);
+  await sleep(1500);
+  const histCells = await js(`document.querySelectorAll('#skin-hist .skin-cell').length`);
+  const histUiOk = histCells >= 1;
+
+  const followOk = histOk && offOk && msOk && backOk && histUiOk;
+  if (!followOk) skinBad++;
+  console.log(`skin 最近使用/账号跟随 ${followOk ? 'OK ' : 'BAD'} 历史=${histOk} 离线=${offOk} 正版不被顶替=${msOk} 切回离线=${backOk} 历史面板=${histCells}项`);
+
+  // 清理测试账号，恢复测试前的登录态
+  const smokeAcc = await js(`(async () => api.authOffline('SmokeSkin'))()`);
+  await js(`api.authRemove(${JSON.stringify(smokeAcc.uuid)})`);
+  await js(`api.authRemove(${JSON.stringify(fakeMsUuid)})`);
+  if (beforeUuid) {
+    try { await js(`api.authSwitch(${JSON.stringify(beforeUuid)})`); } catch { /* ignore */ }
+  } else {
+    await js(`api.configSet('account', null)`);
+  }
 
   console.log(`skin 汇总：错误 ${skinBad}`);
 
@@ -1516,10 +1583,13 @@ async function run() {
   const wantMax = Math.max(2048, Math.min(8192, Math.round(totalMb * 0.5)));
   const boosted = launchMod.boostedMax(4096);
   const boostArgs = launchMod.boostArgs();
+  // 回归守卫：G1NewSizePercent 前必须有 UnlockExperimentalVMOptions，否则 JDK8/9 上 JVM 直接退出码1
+  const unlockBeforeExp = boostArgs.indexOf('-XX:+UnlockExperimentalVMOptions') >= 0
+    && boostArgs.indexOf('-XX:+UnlockExperimentalVMOptions') < boostArgs.indexOf('-XX:G1NewSizePercent=30');
   const boostOk = boosted >= wantMax && boosted <= 8192 && boosted >= 4096
-    && boostArgs.includes('-XX:+UseG1GC') && boostArgs.length >= 10;
+    && boostArgs.includes('-XX:+UseG1GC') && boostArgs.length >= 10 && unlockBeforeExp;
   if (!boostOk) h9Bad++;
-  console.log(`加速 堆自适应 ${boostOk ? 'OK ' : 'BAD'} 物理=${totalMb}MB 配置=4096 生效=${boosted}MB 参数=${boostArgs.length}条`);
+  console.log(`加速 堆自适应 ${boostOk ? 'OK ' : 'BAD'} 物理=${totalMb}MB 配置=4096 生效=${boosted}MB 参数=${boostArgs.length}条 实验选项解锁=${unlockBeforeExp}`);
 
   // ⑧ 真正拼进启动命令：开 / 关加速各来一次
   const fakeVj = {
@@ -1561,6 +1631,33 @@ async function run() {
   const dupOk = argUser.filter((a) => a === '-XX:+UseG1GC').length === 1;
   if (!dupOk) h9Bad++;
   console.log(`加速 不重复加GC参数 ${dupOk ? 'OK ' : 'BAD'} UseG1GC 出现 ${argUser.filter((a) => a === '-XX:+UseG1GC').length} 次`);
+
+  // ⑨b Fabric/Quilt maven 库（无 downloads.artifact）：坐标转换 + 必须进 classpath
+  //     回归守卫：JVM「找不到或无法加载主类 KnotClient」退出码1
+  const dlMod2 = require('./src/main/minecraft/downloader');
+  const mp1 = dlMod2.mavenLibPath('net.fabricmc:fabric-loader:0.19.5');
+  const mp2 = dlMod2.mavenLibPath('net.fabricmc:sponge-mixin:0.17.4+mixin.0.8.7');
+  const mp3 = dlMod2.mavenLibPath('only:two');
+  const fabricVj = {
+    id: 'fabric-loader-0.19.5-1.20',
+    mainClass: 'net.fabricmc.loader.impl.launch.knot.KnotClient',
+    libraries: [
+      { name: 'net.fabricmc:fabric-loader:0.19.5', url: 'https://maven.fabricmc.net/' },
+      { name: 'net.fabricmc:intermediary:1.20', url: 'https://maven.fabricmc.net/' },
+      { downloads: { artifact: { path: 'com/mojang/normal.jar' } } },
+    ],
+    arguments: { jvm: ['-cp', '${classpath}'], game: [] },
+  };
+  const fabricArgs = launchMod.buildLaunchArgs(fabricVj, 'E:\\gm', fakeAcc, { speedBoost: false, maxMemory: 2048, minMemory: 512 });
+  const cpArg = fabricArgs[fabricArgs.indexOf('-cp') + 1];
+  const fabricCpOk = mp1 === 'net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar'
+    && mp2 === 'net/fabricmc/sponge-mixin/0.17.4+mixin.0.8.7/sponge-mixin-0.17.4+mixin.0.8.7.jar'
+    && mp3 === ''
+    && cpArg.includes('fabric-loader-0.19.5.jar')
+    && cpArg.includes('intermediary-1.20.jar')
+    && cpArg.includes('normal.jar');
+  if (!fabricCpOk) h9Bad++;
+  console.log(`加速 Fabric库进classpath ${fabricCpOk ? 'OK ' : 'BAD'} 坐标转换=${mp1 === 'net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar'} 加载器在cp=${cpArg.includes('fabric-loader-0.19.5.jar')}`);
 
   // ⑩ 联机页应当渲染出公网联机区块
   await js(`renderPage('servers')`);
@@ -2377,6 +2474,14 @@ async function run() {
     if (!ok3) h18Bad++;
     console.log(`h18 清理真释放 ${ok3 ? 'OK ' : 'BAD'} ${cl.appBeforeMB}MB → ${cl.appAfterMB}MB 释放=${cl.freedMB}MB 自身进程=${cl.selfTrimmed} 系统=${cl.sysTrimmed} 动作=${cl.actions.join('+') || '(无)'}`);
 
+    // ③-b 指定等级清理（二级：不提权、不弹 UAC；三级起会弹 UAC 不能在自检里跑）
+    const cl2 = await memoryMod.cleanMemory(2);
+    const ok3b = cl2.level === 2 && cl2.elevated === false && cl2.cancelled === false
+      && Number.isFinite(cl2.systemFreedMB) && cl2.systemFreedMB >= 0
+      && Array.isArray(cl2.actions) && cl2.actions.includes('workingset');
+    if (!ok3b) h18Bad++;
+    console.log(`h18 二级清理 ${ok3b ? 'OK ' : 'BAD'} 等级=${cl2.level} 提权=${cl2.elevated} 系统释放=${cl2.systemFreedMB}MB 修剪进程=${cl2.sysTrimmed} 动作=${cl2.actions.join('+') || '(无)'}`);
+
     // ④ 内存条结构：PCL2 式刻度 / 计划标记 / 百分比徽章都在，占用不再是 0MB
     await js(`renderPage('settings')`);
     await sleep(700);
@@ -2441,6 +2546,26 @@ async function run() {
       && auto.tipDisp === 'block' && auto.tip.includes(recNow.band) && auto.tip.includes('上限');
     if (!ok6) h18Bad++;
     console.log(`h18 自动分配按钮 ${ok6 ? 'OK ' : 'BAD'} 最大=${auto.max}（期望${recNow.recommended}）最小=${auto.min}（期望${recNow.minRecommended}）提示=${auto.tipDisp}`);
+
+    // ⑦ 清理强度等级：6 个按钮，切换后 primary / 说明文案（三级起含 UAC 提示）跟着变
+    const lv = JSON.parse(await js(`JSON.stringify((function () {
+      const btns = document.querySelectorAll('#mem-levels button');
+      const desc = document.querySelector('#mem-level-desc');
+      btns[2].click(); // 三级
+      const desc3 = desc ? desc.textContent : '';
+      const primary3 = btns[2].classList.contains('primary');
+      btns[0].click(); // 一级
+      const desc1 = desc ? desc.textContent : '';
+      return {
+        n: btns.length, primary3, primary1: btns[0].classList.contains('primary'),
+        descHasUac: desc3.indexOf('UAC') >= 0, descHasBoost: desc3.indexOf('增强') >= 0,
+        descHasLight: desc1.indexOf('轻度') >= 0, descHasNoUac: desc1.indexOf('UAC') < 0,
+      };
+    })())`));
+    const ok7 = lv.n === 6 && lv.primary3 && lv.primary1
+      && lv.descHasUac && lv.descHasBoost && lv.descHasLight && lv.descHasNoUac;
+    if (!ok7) h18Bad++;
+    console.log(`h18 清理强度等级 ${ok7 ? 'OK ' : 'BAD'} 按钮=${lv.n} 三级选中=${lv.primary3}/UAC提示=${lv.descHasUac} 一级选中=${lv.primary1}/无UAC=${lv.descHasNoUac}`);
 
     // 还原：把自检改动的输入改回配置原值，别污染用户设置
     await js(`(() => {
@@ -2515,6 +2640,75 @@ async function run() {
     const ok7 = live.cards === 1 && live.withHandler === 1 && live.buttons >= 3;
     if (!ok7) h19Bad++;
     console.log(`h19 版本页实机 ${ok7 ? 'OK ' : 'BAD'} 卡片=${live.cards} 有handler=${live.withHandler} 按钮=${live.buttons}`);
+
+    // ⑧ 游戏目录跟随设置：默认实例不再快照 C 盘路径；改目录时实例路径整体改写
+    //    （回归守卫：设置里改到 E 盘，文件却照样下载到 C 盘）
+    const configMod = require('./src/main/config');
+    const { app: electronApp } = require('electron');
+    const oldDefaultPath = require('path').join(electronApp.getPath('appData'), '.minecraft');
+    const sanitized = configMod.sanitize({
+      instances: {
+        default: { name: '默认', gameDir: oldDefaultPath },
+        inst_a: { name: 'A', gameDir: 'C:\\Games\\MC\\instances\\inst_a' },
+        inst_b: { name: 'B', gameDir: 'D:\\Elsewhere\\mc' },
+      },
+    });
+    const ok8a = sanitized.instances.default.gameDir === '';
+
+    const rw = migrateMod.rewriteInstanceDirs({
+      default: { gameDir: '' },
+      root_eq: { gameDir: 'C:\\Games\\MC' },
+      inst_a: { gameDir: 'C:\\Games\\MC\\instances\\inst_a' },
+      inst_b: { gameDir: 'D:\\Elsewhere\\mc' },
+    }, 'C:\\Games\\MC', 'E:\\MC');
+    const ok8b = rw.instances.default.gameDir === ''
+      && rw.changed.root_eq === 'E:\\MC'
+      && rw.changed.inst_a === 'E:\\MC\\instances\\inst_a'
+      && rw.instances.inst_b.gameDir === 'D:\\Elsewhere\\mc'
+      && !('inst_b' in rw.changed);
+
+    const preloadSrc2 = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/preload.js'), 'utf8');
+    const ok8c = /ipcMain\.handle\('gameDir:change'/.test(mainSrc)
+      && preloadSrc2.includes('gameDirChange') && /api\.gameDirChange\(/.test(appSrc);
+
+    const ok8 = ok8a && ok8b && ok8c;
+    if (!ok8) h19Bad++;
+    console.log(`h19 游戏目录跟随设置 ${ok8 ? 'OK ' : 'BAD'} 默认实例清空=${ok8a} 路径改写=${ok8b}(变更 ${Object.keys(rw.changed).length}) IPC接线=${ok8c}`);
+
+    // ⑨ 下载版本=新建实例（不替换）；所有实例可删（含默认实例），重启后默认实例不复活
+    const instancesSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/minecraft/instances.js'), 'utf8');
+    const configSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/config.js'), 'utf8');
+
+    // a) 全链路找不到「默认实例不可删除」；config 记住玩家删除动作
+    const ok9a = !instancesSrc.includes('默认实例不可删除')
+      && !appSrc.includes('默认实例不可删除')
+      && configSrc.includes('defaultRemoved');
+
+    // b) 实例卡片有删除按钮；删除后选中项回落剩余第一个（主进程纯逻辑源码守卫）
+    const ok9b = /data-act="delete"/.test(appSrc)
+      && /const rest = Object\.keys\(all\)/.test(instancesSrc);
+
+    // c) 版本页按钮改为「下载并新建实例」，走 finalizeNewInstance；旧的「写回当前实例」已移除
+    const ok9c = appSrc.includes('下载并新建实例')
+      && /async function finalizeNewInstance/.test(appSrc)
+      && !appSrc.includes('下载并写入实例');
+
+    // d) helper 行为：全空回 null / 选中项删除后回落第一个
+    const helperLive = JSON.parse(await js(`JSON.stringify((function () {
+      const map = { a: { name: 'A' }, b: { name: 'B' } };
+      return {
+        picked: currentInstanceOf(map, 'b') && currentInstanceOf(map, 'b').name,
+        fallback: currentInstanceOf(map, 'gone') && currentInstanceOf(map, 'gone').name,
+        empty: currentInstanceOf({}, 'x'),
+        firstId: firstInstanceId(map),
+      };
+    })())`));
+    const ok9d = helperLive.picked === 'B' && helperLive.fallback === 'A'
+      && helperLive.empty === null && helperLive.firstId === 'a';
+
+    const ok9 = ok9a && ok9b && ok9c && ok9d;
+    if (!ok9) h19Bad++;
+    console.log(`h19 下载即新建且全实例可删 ${ok9 ? 'OK ' : 'BAD'} 可删=${ok9a} 卡片删除=${ok9b} 新建流程=${ok9c} helper=${ok9d}`);
   }
   console.log(`h19 汇总：错误 ${h19Bad}`);
 
@@ -2769,6 +2963,520 @@ async function run() {
   }
   console.log(`h22 汇总：错误 ${h22Bad}`);
 
+  // ---- 批次 H-23：启动器自动更新（版本比较 / 读清单 / 流式下载 / 免安装版降级） ----
+  let h23Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodePath = require('path');
+    const updater = require('./src/main/minecraft/updater');
+    const cur = updater.currentVersion();
+
+    // ① 源码守卫：主进程有更新模块与 IPC，渲染层有更新区块和版本号运行时注入
+    const updaterSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/minecraft/updater.js'), 'utf8');
+    const mainSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/main.js'), 'utf8');
+    const preSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/preload.js'), 'utf8');
+    const appSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/app.js'), 'utf8');
+    const ok1 = /function compareVersion/.test(updaterSrc)
+      // --force-run 是静默安装后自动拉起启动器的唯一开关，漏了它玩家装完就只剩一个空桌面
+      && /--force-run/.test(updaterSrc)
+      && /ipcMain\.handle\('update:check'/.test(mainSrc)
+      && /ipcMain\.handle\('update:download'/.test(mainSrc)
+      && /ipcMain\.handle\('update:install'/.test(mainSrc)
+      && /update:progress/.test(mainSrc)
+      && /updaterCheck:/.test(preSrc) && /onUpdateProgress:/.test(preSrc)
+      && /id="up-block"/.test(appSrc)
+      && /\$\('foot-ver'\)/.test(appSrc) && /foot-status/.test(appSrc);
+    if (!ok1) h23Bad++;
+    console.log(`h23 更新接线 ${ok1 ? 'OK ' : 'BAD'}`);
+
+    // ② 版本比较：必须按数字段比，按字符串比会把 1.10.0 判成小于 1.9.0
+    const cmp = [
+      [updater.compareVersion('1.10.0', '1.9.0'), 1],
+      [updater.compareVersion('1.0.0', '1.0.0'), 0],
+      [updater.compareVersion('v1.2.3', '1.2.3'), 0],
+      [updater.compareVersion('2.0', '1.9.9'), 1],
+      [updater.compareVersion('1.0.0', '1.0.1'), -1],
+    ];
+    const ok2 = cmp.every(([got, want]) => got === want);
+    if (!ok2) h23Bad++;
+    console.log(`h23 版本比较 ${ok2 ? 'OK ' : 'BAD'} ${cmp.map(([g]) => g).join(',')}`);
+
+    // ③ 读清单：本地 /latest.json 版本故意更高 → hasUpdate；非 http(s) 地址要被挡下
+    const man = await updater.check(`http://127.0.0.1:${httpPort}/latest.json`);
+    let badUrlCaught = false;
+    try { await updater.check('file:///etc/passwd'); } catch { badUrlCaught = true; }
+    const ok3 = man.hasUpdate === true && man.latest === '99.0.0' && man.installer === '/blob.bin'
+      && man.notes === '冒烟测试用的更新说明' && man.page === '/download'
+      && man.current === cur && badUrlCaught;
+    if (!ok3) h23Bad++;
+    console.log(`h23 读清单 ${ok3 ? 'OK ' : 'BAD'} 当前=${man.current} 最新=${man.latest} 有新版=${man.hasUpdate} 非法地址拦截=${badUrlCaught}`);
+
+    // ④ 流式下载 + 进度回调（真包 98MB，不能整块进内存；这里验落盘大小与末次 100%）
+    const ticks = [];
+    const dl = await updater.download(
+      { installer: `http://127.0.0.1:${httpPort}/blob.bin` },
+      (p) => ticks.push(p),
+    );
+    const onDisk = nodeFs.existsSync(dl.path) && nodeFs.statSync(dl.path).size;
+    const ok4 = dl.size === payload.length && onDisk === payload.length
+      && ticks.length >= 1 && ticks[ticks.length - 1].percent === 100
+      && ticks.some((t) => t.total === payload.length);
+    if (!ok4) h23Bad++;
+    console.log(`h23 流式下载 ${ok4 ? 'OK ' : 'BAD'} 落盘=${onDisk}/${payload.length} 进度回调=${ticks.length} 末次=${ticks.length ? ticks[ticks.length - 1].percent : -1}%`);
+    try { nodeFs.unlinkSync(dl.path); } catch { /* ignore */ }
+
+    // ⑤ 免安装版降级：install() 必须当场拒绝，不能真去 spawn 替换只读的临时副本
+    process.env.PORTABLE_EXECUTABLE_DIR = 'E:\\smoke-portable';
+    let portableCaught = '';
+    try { updater.install('whatever.exe'); } catch (e) { portableCaught = e.message; }
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
+    const ok5 = !!portableCaught && updater.isPortable() === false;
+    if (!ok5) h23Bad++;
+    console.log(`h23 免安装版降级 ${ok5 ? 'OK ' : 'BAD'} 拒绝语=${portableCaught || '(未拦截)'}`);
+
+    // ⑥ sha256：清单给了哈希就得校验，对了才落盘，错了要把 .part 丢掉
+    const nodeCrypto = require('crypto');
+    const good = nodeCrypto.createHash('sha256').update(payload).digest('hex');
+    const dl2 = await updater.download({ installer: `http://127.0.0.1:${httpPort}/blob.bin`, sha256: good.toUpperCase() });
+    const okGood = dl2.size === payload.length && nodeFs.existsSync(dl2.path);
+    let hashCaught = '';
+    try {
+      await updater.download({ installer: `http://127.0.0.1:${httpPort}/blob.bin`, sha256: 'deadbeef' });
+    } catch (e) { hashCaught = e.message; }
+    const partLeft = nodeFs.existsSync(`${dl2.path}.part`);
+    const ok6 = okGood && !!hashCaught && !partLeft;
+    if (!ok6) h23Bad++;
+    console.log(`h23 安装包校验 ${ok6 ? 'OK ' : 'BAD'} 正确哈希落盘=${dl2.size} 错误哈希拦截=${!!hashCaught} 残留临时文件=${partLeft}`);
+    try { nodeFs.unlinkSync(dl2.path); } catch { /* ignore */ }
+
+    // ⑦ 实机：设置页更新区块在、版本号是运行时注入的；免安装版只给「打开下载页」，安装版才给「立即更新」
+    const r23 = JSON.parse(await js(`(async () => {
+      const keepInfo = state.updateInfo;
+      const keepPending = pendingUpdate;
+      const snap = () => {
+        const action = document.getElementById('up-action');
+        const pageBtn = document.getElementById('up-page');
+        return {
+          block: !!document.getElementById('up-block'),
+          url: !!document.getElementById('up-url'),
+          check: !!document.getElementById('up-check'),
+          progress: !!document.getElementById('up-progress'),
+          cur: (document.getElementById('up-cur') || {}).textContent || '',
+          actionHidden: action ? action.hidden : null,
+          actionLabel: action ? action.textContent : '',
+          pageHidden: pageBtn ? pageBtn.hidden : null,
+        };
+      };
+
+      state.updateInfo = { version: '${cur}', portable: true };
+      pendingUpdate = { current: '${cur}', latest: '99.0.0', hasUpdate: true, installer: 'http://x/blob.bin', page: 'http://x/download', notes: 'n' };
+      renderPage('settings');
+      await new Promise((r) => setTimeout(r, 250));
+      const portableUI = snap();
+
+      // 安装版：同一份清单应把「立即更新」露出来
+      state.updateInfo = { version: '${cur}', portable: false };
+      renderPage('settings');
+      await new Promise((r) => setTimeout(r, 250));
+      const setupUI = snap();
+
+      // 顶栏红点 + 首页徽章 + 侧栏版本号
+      paintUpdateDot();
+      const av = document.getElementById('top-avatar');
+      renderPage('home');
+      await new Promise((r) => setTimeout(r, 200));
+      const badge = document.getElementById('hero-badge-update');
+      portableUI.dot = !!(av && av.classList.contains('has-update'));
+      portableUI.badge = !!(badge && !badge.hidden);
+      portableUI.foot = (document.getElementById('foot-ver') || {}).textContent || '';
+
+      state.updateInfo = keepInfo;
+      pendingUpdate = keepPending;
+      paintUpdateDot();
+      renderPage('settings');
+      await new Promise((r) => setTimeout(r, 150));
+      return JSON.stringify({ portableUI, setupUI });
+    })()`));
+    const p = r23.portableUI;
+    const s = r23.setupUI;
+    const footWant = `v${cur} · 运行正常`;
+    const ok7 = p.block && p.url && p.check && p.progress && p.cur === `v${cur}`
+      && p.actionHidden === true && p.pageHidden === false
+      && s.actionHidden === false && s.actionLabel === '立即更新' && s.pageHidden === false
+      && p.dot === true && p.badge === true && p.foot === footWant;
+    if (!ok7) h23Bad++;
+    console.log(`h23 界面接线 ${ok7 ? 'OK ' : 'BAD'} 区块=${p.block} 版本=${p.cur} 免安装版动作隐藏=${p.actionHidden}/下载页=${p.pageHidden === false} 安装版动作=${s.actionLabel}/${s.actionHidden} 红点=${p.dot} 徽章=${p.badge} 侧栏=${p.foot}`);
+  }
+  console.log(`h23 汇总：错误 ${h23Bad}`);
+
+  // ---- 批次 H-24：下载版本流程重做（二级菜单前置加载器 → 下载成功才建实例 → 资源中心前置） ----
+  let h24Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodeOs = require('os');
+    const nodePath = require('path');
+    const appSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/app.js'), 'utf8');
+    const msSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/auth/microsoft.js'), 'utf8');
+    const versionsMod = require('./src/main/minecraft/versions');
+
+    // ① 源码守卫：二级菜单 / 随机名 / 仅下载 IPC / 资源中心前置 都要在
+    const ok1 = /async function openVersionInstaller/.test(appSrc)
+      && /function randomInstanceName/.test(appSrc)
+      && /async function ensureRuntime/.test(appSrc)
+      && /api\.versionsDownload\(sel\.mcVersion, gameDir\)/.test(appSrc)
+      // 失败不留残实例：统一收尾 finalizeNewInstance 必须在下载 await 之后（两处调用都守）
+      && /const versionId = await downloadVersionWithLoader[\s\S]{0,800}?await finalizeNewInstance\(versionId/.test(appSrc)
+      // 首页「＋ 安装新版本」直接开二级菜单，不再跳版本管理页
+      && /\$\('hero-badge-new'\)\.onclick = \(\) => openVersionInstaller\(\)/.test(appSrc);
+    if (!ok1) h24Bad++;
+    console.log(`h24 二级菜单流程接线 ${ok1 ? 'OK ' : 'BAD'}`);
+
+    // ② mergeInherited：子版本覆盖 mainClass、库去重（子版本盖父版本）、继承 assetIndex
+    const parent = {
+      id: '1.20', mainClass: 'net.Default', type: 'release',
+      libraries: [{ name: 'a:a:1' }, { name: 'c:c:1' }],
+      arguments: { jvm: ['-P'], game: ['--g'] },
+      assetIndex: { id: '5' }, assets: '5',
+    };
+    const childA = { name: 'a:a:1', tag: 'child' };   // 与父版本同名：应被子版本整对象覆盖
+    const child = {
+      id: '1.20-fabric-0.16', inheritsFrom: '1.20', mainClass: 'KnotClient',
+      libraries: [{ name: 'b:b:1' }, childA],
+      arguments: { jvm: ['-DFabric'] },
+    };
+    const merged = versionsMod.mergeInherited(child, parent);
+    const libs = merged.libraries.map((l) => l.name);
+    const ok2 = merged.id === '1.20-fabric-0.16'
+      && merged.mainClass === 'KnotClient'
+      && JSON.stringify(libs) === JSON.stringify(['a:a:1', 'c:c:1', 'b:b:1'])
+      && merged.libraries.find((l) => l.name === 'a:a:1') === childA
+      && merged.arguments.jvm.includes('-P') && merged.arguments.jvm.includes('-DFabric')
+      && merged.arguments.game.includes('--g')
+      && merged.assetIndex.id === '5' && merged.type === 'release';
+    if (!ok2) h24Bad++;
+    console.log(`h24 子版本清单合并 ${ok2 ? 'OK ' : 'BAD'} 库序=${libs.join(',')}`);
+
+    // ③ resolveVersionDetail 走本地：child 带 inheritsFrom，解析结果应已合并父版本
+    const tdir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'cm-smoke-ver-'));
+    nodeFs.mkdirSync(nodePath.join(tdir, 'versions', '1.20'), { recursive: true });
+    nodeFs.writeFileSync(nodePath.join(tdir, 'versions', '1.20', '1.20.json'), JSON.stringify(parent));
+    nodeFs.mkdirSync(nodePath.join(tdir, 'versions', child.id), { recursive: true });
+    nodeFs.writeFileSync(nodePath.join(tdir, 'versions', child.id, `${child.id}.json`), JSON.stringify(child));
+    const resolved = await versionsMod.resolveVersionDetail(child.id, tdir);
+    const ok3 = resolved.mainClass === 'KnotClient'
+      && resolved.libraries.some((l) => l.name === 'b:b:1')
+      && resolved.assetIndex.id === '5';
+    if (!ok3) h24Bad++;
+    console.log(`h24 本地加载器版本解析 ${ok3 ? 'OK ' : 'BAD'} mainClass=${resolved.mainClass}`);
+    try { nodeFs.rmSync(tdir, { recursive: true, force: true }); } catch { /* ignore */ }
+
+    // ④ 登录 bug 修复守卫：OAuth 错误码挂在 err.code 上（不是从英文 description 里猜），
+    //    且 slow_down 会把间隔加大
+    const ok4 = /err\.code = data\.error/.test(msSrc)
+      && /code\.includes\('slow_down'\)/.test(msSrc)
+      && /pollInterval \+= 5000/.test(msSrc);
+    if (!ok4) h24Bad++;
+    console.log(`h24 设备码错误码识别 ${ok4 ? 'OK ' : 'BAD'}`);
+
+    // ⑤ 仅下载通路：launch.prepare 必须存在（供 versions:download IPC 用）
+    const ok5 = typeof launchMod.prepare === 'function';
+    if (!ok5) h24Bad++;
+    console.log(`h24 仅下载不启动接口 ${ok5 ? 'OK ' : 'BAD'}`);
+
+    // ⑥ 实机：开二级菜单 → 加载器 4 项 + 版本下拉有值 → 取消后 Promise 落 null；
+    //    ensureRuntime 遇到已有版本的实例直接放行、不弹窗
+    const live = JSON.parse(await js(`(async () => {
+      const p = openVersionInstaller();
+      await new Promise((r) => setTimeout(r, 250));
+      const modal = document.querySelector('.modal-mask .modal');
+      const loaders = [...document.querySelectorAll('#vi-loaders .tab')].map((t) => t.dataset.loader);
+      const vsel = document.getElementById('vi-version');
+      const verCount = vsel ? vsel.options.length : 0;
+      document.getElementById('vi-cancel').click();
+      const cancelVal = await p;
+      const ready = await ensureRuntime({ name: '已有版本', versionId: '1.20.1' });
+      const modalLeft = document.querySelectorAll('.modal-mask').length;
+      return JSON.stringify({
+        hasModal: !!modal, loaders, verCount, cancelVal,
+        passthrough: ready && ready.versionId === '1.20.1', modalLeft,
+      });
+    })()`));
+    const ok6 = live.hasModal
+      && JSON.stringify(live.loaders) === JSON.stringify(['vanilla', 'forge', 'fabric', 'quilt'])
+      && live.verCount > 0 && live.cancelVal === null
+      && live.passthrough === true && live.modalLeft === 0;
+    if (!ok6) h24Bad++;
+    console.log(`h24 二级菜单实机 ${ok6 ? 'OK ' : 'BAD'} 加载器=${live.loaders.join(',')} 版本数=${live.verCount} 取消=${live.cancelVal === null} 已有版本放行=${live.passthrough}`);
+  }
+  console.log(`h24 汇总：错误 ${h24Bad}`);
+
+  // ---- 批次 H-25：通知浮岛（实验功能开关 + 顶部胶囊两段式弹出/收起） ----
+  let h25Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodePath = require('path');
+    const appSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/app.js'), 'utf8');
+    const htmlSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/index.html'), 'utf8');
+    const cssSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/styles.css'), 'utf8');
+    const configMod = require('./src/main/config');
+
+    // ① 源码守卫：开关 / 容器 / 两段式类名 / 设置接线
+    const ok1 = /id="notify-island"/.test(htmlSrc)
+      && /id="island-pill"/.test(htmlSrc)
+      && /function islandNotify/.test(appSrc)
+      && /pill\.classList\.add\('pop'\)/.test(appSrc)
+      && /pill\.classList\.add\('expanded'\)/.test(appSrc)
+      && /id="set-island"/.test(appSrc)
+      && /id="btn-island-test"/.test(appSrc)
+      && /\.island-pill\.pop/.test(cssSrc)
+      && /\.island-pill\.expanded/.test(cssSrc)
+      // 开关默认关闭
+      && configMod.getAll().islandEnabled === false;
+    if (!ok1) h25Bad++;
+    console.log(`h25 浮岛接线与默认关闭 ${ok1 ? 'OK ' : 'BAD'}`);
+
+    // ② 实机：关着 → notify 静默无效；打开 → 先 pop 后 expanded，文字正确，结束自动隐藏
+    const live = JSON.parse(await js(`(async () => {
+      const host = document.getElementById('notify-island');
+      const pill = document.getElementById('island-pill');
+      state.config.islandEnabled = false;
+      islandNotify({ title: '不该出现' });
+      await new Promise((r) => setTimeout(r, 120));
+      const ignored = host.hidden;
+
+      state.config.islandEnabled = true;
+      islandState.queue.length = 0;
+      islandNotify({ ico: '🧪', title: '冒烟浮岛', desc: '测试描述', hold: 180 });
+      await new Promise((r) => setTimeout(r, 120));
+      const popped = pill.classList.contains('pop') && !pill.classList.contains('expanded');
+      await new Promise((r) => setTimeout(r, 260));
+      const expanded = pill.classList.contains('expanded')
+        && document.getElementById('island-title').textContent === '冒烟浮岛'
+        && document.getElementById('island-ico').textContent === '🧪';
+      // 等完整生命周期结束（220 + 180 + 300 + 300）
+      await new Promise((r) => setTimeout(r, 720));
+      const hiddenAgain = host.hidden && !pill.classList.contains('pop');
+      return JSON.stringify({ ignored, popped, expanded, hiddenAgain });
+    })()`));
+    const ok2 = live.ignored && live.popped && live.expanded && live.hiddenAgain;
+    if (!ok2) h25Bad++;
+    console.log(`h25 两段式弹出与自动收起 ${ok2 ? 'OK ' : 'BAD'} 关闭态静默=${live.ignored} 先弹出=${live.popped} 再展开=${live.expanded} 自动隐藏=${live.hiddenAgain}`);
+
+    // ③ 连续相同标题去重 + 设置页开关在
+    const dedup = JSON.parse(await js(`(async () => {
+      islandState.queue.length = 0;
+      islandState.busy = true;   // 假装正在播：让新消息留在队列里，才能验去重
+      islandNotify({ title: '同一条', hold: 100 });
+      islandNotify({ title: '同一条', hold: 100 });
+      const q1 = islandState.queue.length;
+      islandState.queue.length = 0;
+      islandState.busy = false;
+      renderPage('settings');
+      await new Promise((r) => setTimeout(r, 150));
+      const toggle = document.getElementById('set-island');
+      const testBtn = document.getElementById('btn-island-test');
+      state.config.islandEnabled = false;
+      return JSON.stringify({ q1, hasToggle: !!toggle, hasTest: !!testBtn });
+    })()`));
+    const ok3 = dedup.q1 === 1 && dedup.hasToggle && dedup.hasTest;
+    if (!ok3) h25Bad++;
+    console.log(`h25 重复去重与设置开关 ${ok3 ? 'OK ' : 'BAD'} 队列=${dedup.q1} 开关=${dedup.hasToggle} 试弹按钮=${dedup.hasTest}`);
+  }
+  console.log(`h25 汇总：错误 ${h25Bad}`);
+
+  // ---- 批次 H-26：下载 / 登录自动弹浮岛 + 所有网页收进内置浏览器 ----
+  let h26Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodePath = require('path');
+    const mainSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/main/main.js'), 'utf8');
+    const appSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/app.js'), 'utf8');
+
+    // ① 源码守卫：shell:open 与 update:open 的 http(s) 都走 browser.open
+    const shellBlock = mainSrc.match(/ipcMain\.handle\('shell:open'[\s\S]*?\}\);/)[0];
+    const updBlock = mainSrc.match(/ipcMain\.handle\('update:open'[\s\S]*?\}\);/)[0];
+    const ok1 = /\^https\?:\\\/\\\//.test(shellBlock) && /browser\.open\(u\)/.test(shellBlock)
+      && /browser\.open\(u\)/.test(updBlock)
+      // 下载开始 / 登录开始的浮岛调用都在
+      && /开始下载 \$\{sel\.mcVersion\}/.test(appSrc)
+      && /正在登录微软账号/.test(appSrc)
+      && /离线登录成功：\$\{state\.account\.username\}/.test(appSrc);
+    if (!ok1) h26Bad++;
+    console.log(`h26 网页收进内置浏览器与浮岛埋点 ${ok1 ? 'OK ' : 'BAD'}`);
+
+    // ② 实机：api.openUrl(https) 开的是内置浏览器窗口，不是系统浏览器
+    await js(`(async () => { await api.openUrl('https://www.example.com/?smoke=1'); })()`);
+    await new Promise((r) => setTimeout(r, 900));
+    const openedInside = browserMod.isOpen();
+    const wins = require('electron').BrowserWindow.getAllWindows();
+    const hasBrowserWin = wins.some((w) => w.title.includes('CM 浏览器'));
+    if (openedInside) browserMod.close();
+    await new Promise((r) => setTimeout(r, 400));
+    const closedOk = !browserMod.isOpen();
+    const ok2 = openedInside && hasBrowserWin && closedOk;
+    if (!ok2) h26Bad++;
+    console.log(`h26 外链走内置浏览器窗口 ${ok2 ? 'OK ' : 'BAD'} 打开=${openedInside} 窗口标题对=${hasBrowserWin} 可关闭=${closedOk}`);
+
+    // ③ 实机：开启浮岛后走一遍离线登录（纯本地、不触网），浮岛应自动弹出登录成功
+    const live = JSON.parse(await js(`(async () => {
+      state.config.islandEnabled = true;
+      islandState.queue.length = 0;
+      renderPage('account');
+      await new Promise((r) => setTimeout(r, 150));
+      document.getElementById('off-name').value = 'SmokeTester';
+      document.getElementById('off-login').click();
+      await new Promise((r) => setTimeout(r, 500));
+      const pill = document.getElementById('island-pill');
+      const title = document.getElementById('island-title').textContent;
+      const ico = document.getElementById('island-ico').textContent;
+      const popped = pill.classList.contains('pop');
+      // 收尾：删掉这个测试账号，关掉浮岛
+      const uuid = state.account && state.account.uuid;
+      if (uuid) await api.authRemove(uuid);
+      islandState.queue.length = 0;
+      document.getElementById('notify-island').hidden = true;
+      pill.classList.remove('pop', 'expanded');
+      state.config.islandEnabled = false;
+      return JSON.stringify({ title, ico, popped });
+    })()`));
+    const ok3 = live.popped && live.ico === '✅' && live.title.includes('离线登录成功：SmokeTester');
+    if (!ok3) h26Bad++;
+    console.log(`h26 登录成功自动弹浮岛 ${ok3 ? 'OK ' : 'BAD'} 弹出=${live.popped} 图标=${live.ico} 标题=${live.title}`);
+  }
+  console.log(`h26 汇总：错误 ${h26Bad}`);
+
+  // ---- 批次 H-27：内置陶瓦 / EasyTier 不再直接启动 exe 强开系统浏览器 ----
+  let h27Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodePath = require('path');
+    const appSrc = nodeFs.readFileSync(nodePath.join(__dirname, 'src/renderer/app.js'), 'utf8');
+
+    // ① 源码守卫：卡片锚点 + bundled 不走 data-lan-run + 改为 data-lan-goto 引导
+    const ok1 = appSrc.includes('id="lan-card-taohua"')
+      && appSrc.includes('id="lan-card-easytier"')
+      && /t\.found && !t\.bundled \? `[^`]*data-lan-run/.test(appSrc)
+      && /t\.bundled \? `[^`]*data-lan-goto="\$\{t\.id\}">↑ 用上面卡片/.test(appSrc)
+      && /querySelectorAll\('\[data-lan-goto\]'\)/.test(appSrc)
+      && /scrollIntoView/.test(appSrc);
+    if (!ok1) h27Bad++;
+    console.log(`h27 内置工具改为引导而非直启 ${ok1 ? 'OK ' : 'BAD'}`);
+
+    // ② 实机：联机页工具区，内置的陶瓦 / EasyTier 无「启动」、有「↑ 用上面卡片」；
+    //    红石（托管但非内置）仍保留「启动」
+    const live = JSON.parse(await js(`(async () => {
+      renderPage('servers');
+      // renderTools 由 lanDetect 异步填充，等它几轮
+      let tries = 0;
+      while (tries++ < 20 && !document.querySelector('[data-lan-goto], [data-lan-run]')) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      const cardTao = !!document.getElementById('lan-card-taohua');
+      const cardEt = !!document.getElementById('lan-card-easytier');
+      const runTao = !!document.querySelector('[data-lan-run="taohua"]');
+      const runEt = !!document.querySelector('[data-lan-run="easytier"]');
+      const gotoTao = document.querySelector('[data-lan-goto="taohua"]');
+      const gotoEt = document.querySelector('[data-lan-goto="easytier"]');
+      // 点陶瓦的引导：不应产生新窗口进程，只滚动
+      if (gotoTao) gotoTao.click();
+      await new Promise((r) => setTimeout(r, 100));
+      return JSON.stringify({
+        cardTao, cardEt, runTao, runEt,
+        gotoTao: !!gotoTao, gotoEt: !!gotoEt,
+      });
+    })()`));
+    const ok2 = live.cardTao && live.cardEt
+      && !live.runTao && !live.runEt
+      && live.gotoTao && live.gotoEt;
+    if (!ok2) h27Bad++;
+    console.log(`h27 工具区按钮形态 ${ok2 ? 'OK ' : 'BAD'} 陶瓦直启=${live.runTao}(应false) 陶瓦引导=${live.gotoTao} ET直启=${live.runEt}(应false) ET引导=${live.gotoEt}`);
+  }
+  console.log(`h27 汇总：错误 ${h27Bad}`);
+
+  // ---- 批次 H-28：种子地图升级为完整群系/结构地图（cubiomes 引擎） ----
+  let h28Bad = 0;
+  {
+    const nodeFs = require('fs');
+    const nodePath = require('path');
+    const read = (p) => nodeFs.readFileSync(nodePath.join(__dirname, p), 'utf8');
+    const appSrc = read('src/renderer/app.js');
+    const mainSrc = read('src/main/main.js');
+    const preloadSrc = read('src/main/preload.js');
+
+    // ① 接线与文件守卫：引擎模块 / IPC / preload / exe 全部就位
+    const mapcliSrc = read('resources/tools/seedmap/cubiomes-src/mapcli.c');
+    const exeFile = nodePath.join(__dirname, 'resources/tools/seedmap/seedmap.exe');
+    const ok1 = nodeFs.existsSync(exeFile) && nodeFs.statSync(exeFile).size > 100000
+      && nodeFs.existsSync(nodePath.join(__dirname, 'src/main/minecraft/seedmap-engine.js'))
+      && mainSrc.includes("handle('lab:seedTile'") && mainSrc.includes("handle('lab:seedBiome'")
+      && preloadSrc.includes('labSeedTile') && appSrc.includes('api.labSeedTile')
+      && appSrc.includes('BIOME_NAMES') && appSrc.includes('STRUCT_META')
+      && nodeFs.existsSync(nodePath.join(__dirname, 'resources/tools/seedmap/LICENSE.txt'))
+      && nodeFs.existsSync(nodePath.join(__dirname, 'resources/tools/seedmap/cubiomes-src/mapcli.c'))
+      // 要塞 bug 守卫：先 nextStronghold 再打印 sh.pos，不能 do-while 先打印（否则首点恒为假 0 0）
+      && /while\s*\(nextStronghold\(&sh,\s*NULL\)\s*>\s*0\)/.test(mapcliSrc)
+      && !/do\s*\{\s*printf\("%d %d\\n",\s*sh\.pos/.test(mapcliSrc)
+      // chunkbase 外链必须把 seed 一起传过去
+      && preloadSrc.includes("invoke('lab:chunkbase', seed, version)");
+    if (!ok1) h28Bad++;
+    console.log(`h28 引擎接线与分发文件 ${ok1 ? 'OK ' : 'BAD'} exe=${nodeFs.existsSync(exeFile)}`);
+
+    // ② 实机：种子地图渲染、坐标 HUD、维度切换、图例
+    const live = JSON.parse(await js(`(async () => {
+      renderPage('lab');
+      document.querySelector('#lab-bar [data-lab="seed"]').click();
+      await new Promise((r) => setTimeout(r, 200));
+      const canvas = document.getElementById('sd-canvas');
+      const cctx = canvas.getContext('2d');
+      document.getElementById('sd-seed').value = '12345';
+      document.getElementById('sd-gen').click();
+      // 等瓦片：中心区域出现非背景色
+      let tries = 0;
+      let varied = false;
+      while (tries++ < 30) {
+        await new Promise((r) => setTimeout(r, 200));
+        const d = cctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        for (let i = 0; i < d.length; i += 16) {
+          if (d[i] > 12 || d[i + 1] > 12 || d[i + 2] > 24) { varied = true; break; }
+        }
+        if (varied) break;
+      }
+      const hudText = document.getElementById('sd-hud').textContent;
+      const legendN = document.getElementById('sd-legend').children.length;
+
+      // 切到下界
+      const nethBtn = document.querySelector('#sd-dims [data-dim="-1"]');
+      nethBtn.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const nethActive = nethBtn.classList.contains('primary');
+      const nethVaried = (() => {
+        const d = cctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        for (let i = 0; i < d.length; i += 16) {
+          if (d[i] > 40) return true;
+        }
+        return false;
+      })();
+
+      // 回主世界
+      const owBtn = document.querySelector('#sd-dims [data-dim="0"]');
+      owBtn.click();
+      await new Promise((r) => setTimeout(r, 800));
+
+      // 要塞守卫：128 个点里不能出现假的原点标记
+      const shPts = await api.labSeedStrongholds({ version: '1.20', seed: '12345' });
+      const shCount = shPts.length;
+      const shAnyZero = shPts.some((p) => p.x === 0 && p.z === 0);
+
+      return JSON.stringify({ varied, hudText, legendN, nethActive, nethVaried, shCount, shAnyZero });
+    })()`));
+    const ok2 = live.varied && /X -?\d/.test(live.hudText) && live.legendN >= 10
+      && live.nethActive && live.nethVaried
+      && live.shCount >= 120 && !live.shAnyZero;
+    if (!ok2) h28Bad++;
+    console.log(`h28 地图实机交互 ${ok2 ? 'OK ' : 'BAD'} 群系图=${live.varied} HUD="${live.hudText}" 图例=${live.legendN} 下界=${live.nethActive}/${live.nethVaried} 要塞=${live.shCount}/假原点=${live.shAnyZero}`);
+  }
+  console.log(`h28 汇总：错误 ${h28Bad}`);
+
   // ---- UI 巡检：逐页截图，确认液态玻璃 / 美西螈风格 ----
   const accInfo = await js('document.body.getAttribute("data-accent") + " / " + getComputedStyle(document.body).getPropertyValue("--accent")');
   console.log(`ui 主题 accent = ${accInfo}`);
@@ -2787,7 +3495,7 @@ async function run() {
   BrowserWindow.getAllWindows().forEach((w) => { try { w.destroy(); } catch { /* ignore */ } });
   await sleep(300);
 
-  app.exit(kindBad || diskBad || skinBad || gBad || hBad || h2Bad || h3Bad || h4Bad || h5Bad || h6Bad || h7Bad || h8Bad || h9Bad || h10Bad || h11Bad || h12Bad || h13Bad || h14Bad || h15Bad || h16Bad || h17Bad || h18Bad || h19Bad || h20Bad || h21Bad || h22Bad ? 1 : 0);
+  app.exit(kindBad || diskBad || skinBad || gBad || hBad || h2Bad || h3Bad || h4Bad || h5Bad || h6Bad || h7Bad || h8Bad || h9Bad || h10Bad || h11Bad || h12Bad || h13Bad || h14Bad || h15Bad || h16Bad || h17Bad || h18Bad || h19Bad || h20Bad || h21Bad || h22Bad || h23Bad || h24Bad || h25Bad || h26Bad || h27Bad || h28Bad ? 1 : 0);
 }
 
 setTimeout(() => run().catch((e) => { console.log('ERR', e.message); app.exit(1); }), 1500);

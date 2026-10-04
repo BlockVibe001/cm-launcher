@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   // 版本
   versionsManifest: (force) => ipcRenderer.invoke('versions:manifest', force),
   versionsInstalled: (gameDir) => ipcRenderer.invoke('versions:installed', gameDir),
+  versionsDownload: (mcVersion, gameDir) => ipcRenderer.invoke('versions:download', mcVersion, gameDir),
 
   // Java
   javaList: () => ipcRenderer.invoke('java:list'),
@@ -67,6 +68,12 @@ contextBridge.exposeInMainWorld('api', {
   labSlime: (seed, cx0, cz0, w, h) => ipcRenderer.invoke('lab:slime', seed, cx0, cz0, w, h),
   labSeedFromSave: (saveDir) => ipcRenderer.invoke('lab:seedFromSave', saveDir),
   labChunkbase: (seed, version) => ipcRenderer.invoke('lab:chunkbase', seed, version),
+  labSeedTile: (payload) => ipcRenderer.invoke('lab:seedTile', payload),
+  labSeedStructs: (payload) => ipcRenderer.invoke('lab:seedStructs', payload),
+  labSeedStrongholds: (payload) => ipcRenderer.invoke('lab:seedStrongholds', payload),
+  labSeedSpawn: (payload) => ipcRenderer.invoke('lab:seedSpawn', payload),
+  labSeedSlime: (payload) => ipcRenderer.invoke('lab:seedSlime', payload),
+  labSeedBiome: (payload) => ipcRenderer.invoke('lab:seedBiome', payload),
   labSchematicOpen: (presetPath) => ipcRenderer.invoke('lab:schematicOpen', presetPath),
   labSchematicReplace: (from, to) => ipcRenderer.invoke('lab:schematicReplace', from, to),
   labSchematicExport: () => ipcRenderer.invoke('lab:schematicExport'),
@@ -89,6 +96,9 @@ contextBridge.exposeInMainWorld('api', {
   forgeVersions: (mcVersion) => ipcRenderer.invoke('modloader:forge:versions', mcVersion),
   forgeInstall: (mcVersion, fv, gameDir, javaPath) =>
     ipcRenderer.invoke('modloader:forge:install', mcVersion, fv, gameDir, javaPath),
+  neoForgeVersions: (mcVersion) => ipcRenderer.invoke('modloader:neoforge:versions', mcVersion),
+  neoForgeInstall: (mcVersion, nv, gameDir, javaPath) =>
+    ipcRenderer.invoke('modloader:neoforge:install', mcVersion, nv, gameDir, javaPath),
   fabricLoaders: () => ipcRenderer.invoke('modloader:fabric:loaders'),
   fabricInstall: (mcVersion, lv, gameDir) =>
     ipcRenderer.invoke('modloader:fabric:install', mcVersion, lv, gameDir),
@@ -108,6 +118,7 @@ contextBridge.exposeInMainWorld('api', {
   cfWorldInstall: (file, gameDir) => ipcRenderer.invoke('search:curseforge:world', file, gameDir),
   mrSearch: (query, mcVersion, modLoader, projectType) => ipcRenderer.invoke('search:modrinth', query, mcVersion, modLoader, projectType),
   mrVersions: (projectId, mcVersion, modLoader) => ipcRenderer.invoke('search:modrinth:versions', projectId, mcVersion, modLoader),
+  mrProject: (projectId) => ipcRenderer.invoke('search:modrinth:project', projectId),
   mrDownload: (file, gameDir, projectType) => ipcRenderer.invoke('search:modrinth:download', file, gameDir, projectType),
   mrInstallPack: (file, gameRoot) => ipcRenderer.invoke('search:modrinth:installpack', file, gameRoot),
 
@@ -144,6 +155,8 @@ contextBridge.exposeInMainWorld('api', {
   skinUploadYggdrasil: (filePath, variant) => ipcRenderer.invoke('skin:uploadYggdrasil', filePath, variant),
   skinLibrary: (base, query, page) => ipcRenderer.invoke('skin:library', base, query, page),
   skinCurrent: () => ipcRenderer.invoke('skin:current'),
+  skinUse: (filePath) => ipcRenderer.invoke('skin:use', filePath),
+  skinHistory: () => ipcRenderer.invoke('skin:history'),
 
   // 下载任务队列
   downloadsList: () => ipcRenderer.invoke('downloads:list'),
@@ -197,10 +210,19 @@ contextBridge.exposeInMainWorld('api', {
   easytierLeave: () => ipcRenderer.invoke('easytier:leave'),
   onEasytierState: (cb) => ipcRenderer.on('easytier:state', (_e, s) => cb(s)),
 
+  // 启动器自更新
+  updaterVersion: () => ipcRenderer.invoke('update:version'),
+  updaterCheck: (url) => ipcRenderer.invoke('update:check', url),
+  updaterDownload: (manifest) => ipcRenderer.invoke('update:download', manifest),
+  updaterInstall: (p) => ipcRenderer.invoke('update:install', p),
+  updaterOpen: (url) => ipcRenderer.invoke('update:open', url),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, p) => cb(p)),
+
   // 内存管理
   memoryInfo: () => ipcRenderer.invoke('memory:info'),
   memoryRecommend: () => ipcRenderer.invoke('memory:recommend'),
-  memoryClean: () => ipcRenderer.invoke('memory:clean'),
+  memoryClean: (level) => ipcRenderer.invoke('memory:clean', level),
+  gameDirChange: (dir, move) => ipcRenderer.invoke('gameDir:change', dir, move),
 
   // 外部
   openUrl: (url) => ipcRenderer.invoke('shell:open', url),

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data: file:; media-src file: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data: file: asset: http://asset.localhost; media-src file: https: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>BlockVibe Launcher</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -86,7 +86,7 @@
         </button>
 
         <div class="sidenav-foot">
-          <div class="foot-status"><span class="dot"></span> v1.0.0 · 运行正常</div>
+          <div class="foot-status" id="foot-status" title="CM Minecraft Launcher"><span class="dot"></span><span id="foot-ver">v1.0.0 · 运行正常</span></div>
           <div class="foot-license">MIT License · 独立项目</div>
         </div>
       </nav>
@@ -95,6 +95,17 @@
       <main class="content" id="content">
         <!-- 页面由 JS 动态渲染 -->
       </main>
+    </div>
+  </div>
+
+  <!-- 通知浮岛：顶部正中弹出的液态玻璃胶囊（实验功能，设置里开关） -->
+  <div class="notify-island" id="notify-island" hidden>
+    <div class="island-pill" id="island-pill">
+      <span class="island-ico" id="island-ico">🔔</span>
+      <span class="island-text">
+        <span class="island-title" id="island-title"></span>
+        <span class="island-desc" id="island-desc"></span>
+      </span>
     </div>
   </div>
 
@@ -116,6 +127,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
+  <script src="api-adapter.js"></script>
   <script src="glass-motion.js"></script>
   <script src="app.js"></script>
 </body>

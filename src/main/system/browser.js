@@ -100,9 +100,9 @@ function classify(url, filename) {
   return { kind: 'file', dir: '', label: '文件' };
 }
 
-/** 当前实例的游戏目录；实例没配就退回全局设置里的那个 */
+/** 当前实例的游戏目录；实例不存在（已被删）就退回全局设置里的那个 */
 function currentGameDir() {
-  const inst = instances.getInstance(config.get('selectedInstance') || 'default');
+  const inst = instances.getInstance(config.get('selectedInstance'));
   return (inst && inst.gameDir) || config.get('gameDir');
 }
 

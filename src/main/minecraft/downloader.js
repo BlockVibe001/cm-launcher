@@ -6,7 +6,7 @@ const { mirrorUrl } = require('./mirror');
 const { matchesRules, osName } = require('./rules');
 const logger = require('../logger');
 
-const CONCURRENCY = 16;
+const CONCURRENCY = 8;
 
 class CanceledError extends Error {
   constructor() {
@@ -68,6 +68,8 @@ async function downloadFile(url, dest, expectedSha1, signal) {
       lastErr = e;
       if (attempt < 3) {
         logger.warn(`下载重试 ${attempt}/3：${path.basename(dest)}（${e.message}）`);
+        // 退避一下再试：刚才是网络抖动的话，立刻重试往往还是失败
+        await new Promise((r) => setTimeout(r, 400 * attempt));
       }
     }
   }
@@ -77,6 +79,18 @@ async function downloadFile(url, dest, expectedSha1, signal) {
 function parseMavenName(name) {
   const p = name.split(':');
   return { group: p[0], artifact: p[1], version: p[2], classifier: p[3] || null };
+}
+
+/**
+ * maven 坐标 → libraries 目录下的相对路径。
+ * net.fabricmc:fabric-loader:0.19.5 → net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar
+ * 带 classifier 时文件名追加 -classifier。坐标不完整（少于三段）返回 ''。
+ */
+function mavenLibPath(name) {
+  const m = parseMavenName(String(name || ''));
+  if (!m.group || !m.artifact || !m.version) return '';
+  const file = `${m.artifact}-${m.version}${m.classifier ? '-' + m.classifier : ''}.jar`;
+  return path.posix.join(m.group.split('.').join('/'), m.artifact, m.version, file);
 }
 
 function isCurrentOsClassifier(classifier) {
@@ -118,7 +132,12 @@ async function prepareGame(vj, gameDir, options = {}) {
   const assetsDir = path.join(gameDir, 'assets');
 
   mkdirp(versionsDir);
-  fs.writeFileSync(path.join(versionsDir, `${vj.id}.json`), JSON.stringify(vj, null, 2));
+  // 只在本地还没有版本清单时才写：带 Mod 加载器的版本（Forge/Fabric/Quilt）清单是安装器
+  // 写好的、里面带 inheritsFrom，用合并后的结果覆盖它会让下次解析重复叠一遍父版本参数。
+  const versionJson = path.join(versionsDir, `${vj.id}.json`);
+  if (!fs.existsSync(versionJson)) {
+    fs.writeFileSync(versionJson, JSON.stringify(vj, null, 2));
+  }
 
   const downloads = [];
   const extractions = [];
@@ -146,6 +165,19 @@ async function prepareGame(vj, gameDir, options = {}) {
         size: artifact.size,
         label: artifact.path,
       });
+    } else if (!lib.natives) {
+      // Fabric/Quilt profile：库只给 name + maven url（无 downloads.artifact）。
+      // 不补这步会导致 fabric-loader 等从不下载 / 已被删目录后无法自愈。
+      const rel = mavenLibPath(lib.name || '');
+      const m = parseMavenName(lib.name || '');
+      if (rel && !m.classifier) {
+        const base = (lib.url || 'https://libraries.minecraft.net/').replace(/\/?$/, '/');
+        downloads.push({
+          url: base + rel,
+          dest: path.join(librariesDir, rel),
+          label: rel,
+        });
+      }
     }
 
     // 新格式：natives 作为带 classifier 的普通库出现，需要解压
@@ -227,6 +259,10 @@ async function prepareGame(vj, gameDir, options = {}) {
   };
   report('');
 
+  // 关键：个别文件失败不能拖垮整批。以前任一文件重试 3 次失败就会让
+  // Promise.all 直接 reject，玩家看到的是「启动失败」，实际只是几千个文件里
+  // 掉了一个。现在先把失败收集起来，跑完这一轮再逐个补一次，仍然失败的才报错。
+  const failed = [];
   let cursor = 0;
   const worker = async () => {
     while (cursor < downloads.length) {
@@ -234,6 +270,9 @@ async function prepareGame(vj, gameDir, options = {}) {
       const task = downloads[cursor++];
       try {
         await downloadFile(task.url, task.dest, task.sha1, signal);
+      } catch (e) {
+        if (e.code === 'CANCELED') throw e;
+        failed.push({ task, error: e });
       } finally {
         bytesDone += task.size || 0;
         completed += 1;
@@ -243,6 +282,27 @@ async function prepareGame(vj, gameDir, options = {}) {
   };
 
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+  if (failed.length) {
+    logger.warn(`${failed.length} 个文件本轮下载失败，正在逐个补下载…`);
+    const still = [];
+    for (const item of failed) {
+      if (signal && signal.aborted) throw new CanceledError();
+      try {
+        await downloadFile(item.task.url, item.task.dest, item.task.sha1, signal);
+        logger.info(`补下载成功：${item.task.label}`);
+      } catch (e) {
+        if (e.code === 'CANCELED') throw e;
+        still.push(item);
+      }
+    }
+    if (still.length) {
+      const names = still.slice(0, 5).map((i) => i.task.label).join('、');
+      throw new Error(
+        `有 ${still.length} 个文件下载失败：${names}${still.length > 5 ? ' 等' : ''}。请检查网络后重试。`,
+      );
+    }
+  }
 
   // 5) 解压 natives
   for (const ex of extractions) {
@@ -264,4 +324,4 @@ async function prepareGame(vj, gameDir, options = {}) {
   report('完成');
 }
 
-module.exports = { prepareGame, CanceledError, hashFile, downloadFile };
+module.exports = { prepareGame, CanceledError, hashFile, downloadFile, mavenLibPath };

@@ -22,7 +22,10 @@ function defaults() {
       default: {
         name: '默认',
         versionId: '',
-        gameDir: path.join(app.getPath('appData'), '.minecraft'),
+        // 空串 = 跟随全局 gameDir。早先这里快照了 %APPDATA%\.minecraft，
+        // 用户在设置里把全局目录改到别的盘后，默认实例仍指向 C 盘旧路径，
+        // 游戏文件就照样下载到 C 盘（「设置改了不生效」的根因）。
+        gameDir: '',
         modLoader: 'vanilla',
         loaderVersion: '',
         javaPath: '',
@@ -33,6 +36,7 @@ function defaults() {
     },
     account: null,
     accounts: [],   // 保存的多账号列表
+    skinHistory: [], // 最近用过的皮肤 [{path,name,t}]，点击即可重新使用
     // UI 主题
     accent: 'axolotl',
     theme: 'dark',              // 外观模式：dark 深色 | light 浅色 | oled 纯黑 | system 跟随系统
@@ -82,10 +86,18 @@ function defaults() {
       { id: 'news', visible: true, span: 1 },
       { id: 'stats', visible: true, span: 2 },
     ],
+    // 启动器自更新：更新地址由玩家自己填，留空则不检查
+    update: {
+      url: '',
+      autoCheck: true,
+      lastCheckAt: 0,
+    },
     pinned: { instances: [], servers: [], worlds: [] },
     playLog: {},   // { 'YYYY-MM-DD': { total: n, instances: { id: {name, count} } } }
     newsCache: null,
     newsCacheAt: 0,
+    // 实验功能：通知浮岛（顶部正中弹出的液态玻璃胶囊）
+    islandEnabled: false,
   };
 }
 
@@ -98,8 +110,19 @@ function ensure() {
   } catch {
     // 首次或损坏
   }
+  // 玩家主动删掉默认实例后，deepMerge 会把 defaults 里的 default 再合回来（重启复活）。
+  // 因此记住「配置里存在 instances、但没有 default 键」这种情形，合并完再把它删掉。
+  const stored = data.instances;
+  const defaultRemoved = stored && typeof stored === 'object' && !Array.isArray(stored)
+    && !Object.prototype.hasOwnProperty.call(stored, 'default');
+
   cache = deepMerge(defaults(), data);
   sanitize(cache);
+  if (defaultRemoved) delete cache.instances.default;
+
+  // selectedInstance 兜底：指向已删除实例时落到剩余第一个，全删光则置空。
+  const ids = Object.keys(cache.instances || {});
+  if (!ids.includes(cache.selectedInstance)) cache.selectedInstance = ids[0] || '';
   return cache;
 }
 
@@ -130,6 +153,7 @@ function sanitize(c) {
   // 登录列表兜底：老版本 / 更新以后可能只有 account 却没把它记进 accounts 列表，
   // 这样「已保存账号」里就选不到它，只能重新登录。这里统一补齐，保证登录不丢。
   if (!Array.isArray(c.accounts)) c.accounts = [];
+  if (!Array.isArray(c.skinHistory)) c.skinHistory = [];
   if (c.account && typeof c.account === 'object' && c.account.uuid
     && !c.accounts.some((a) => a && a.uuid === c.account.uuid)) {
     c.accounts.push(c.account);
@@ -147,8 +171,26 @@ function sanitize(c) {
   }
 
   c.speedBoost = c.speedBoost !== false;
+
+  // 默认实例必须跟随全局游戏目录：旧配置里它存着 C 盘旧路径的快照，
+  // 会把全局目录的修改「吃掉」。值等于旧默认路径时一律清空交回全局。
+  const insts = c.instances || {};
+  const def = insts.default;
+  if (def && def.gameDir === path.join(app.getPath('appData'), '.minecraft')) {
+    def.gameDir = '';
+  }
+
+  c.islandEnabled = c.islandEnabled === true;
   if (!['', 'image', 'animated', 'video', 'live'].includes(c.wallpaperKind || '')) c.wallpaperKind = '';
   if (c.wallpaperType !== 'custom') c.wallpaperType = 'builtin';
+
+  // 更新配置兜底：地址只保证是字符串（URL 是否合法等真要请求时再判），
+  // lastCheckAt 若不是数字，「6 小时内不重复检查」就永远失效，统一归零。
+  const up = c.update || {};
+  up.url = typeof up.url === 'string' ? up.url.trim() : '';
+  up.lastCheckAt = Number.isFinite(Number(up.lastCheckAt)) ? Number(up.lastCheckAt) : 0;
+  up.autoCheck = up.autoCheck !== false;
+  c.update = up;
   return c;
 }
 
@@ -195,13 +237,18 @@ function update(obj) {
 function setAccount(acc) {
   ensure();
   const list = cache.accounts || [];
+  let cur = acc;
   if (acc && acc.uuid) {
     const idx = list.findIndex((a) => a && a.uuid === acc.uuid);
-    if (idx >= 0) list[idx] = acc;
-    else list.push(acc);
+    if (idx >= 0) {
+      // 同名离线账号重新登录会产生全新对象，保留旧账号绑定的皮肤，
+      // 否则每次重新登录离线号，之前选的皮肤就丢了。
+      cur = { ...list[idx], ...acc };
+      list[idx] = cur;
+    } else list.push(cur);
   }
   cache.accounts = list;
-  cache.account = acc || null;
+  cache.account = cur || null;
   save();
   return cache.account;
 }

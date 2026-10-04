@@ -18,12 +18,12 @@ const state = {
 
 const ACCENTS = [
   { id: 'axolotl', color: '#f472b6' },
-  { id: 'emerald', color: '#22c55e' },
+  { id: 'emerald', color: '#27bd5eff' },
   { id: 'cyan', color: '#22d3ee' },
   { id: 'violet', color: '#a78bfa' },
   { id: 'rose', color: '#fb7185' },
   { id: 'amber', color: '#fbbf24' },
-  { id: 'sky', color: '#38bdf8' },
+  { id: 'sky', color: '#46c5fcff' },
 ];
 
 /* ========== 初始化 ========== */
@@ -38,16 +38,12 @@ async function init() {
   bindGlassAuto();
   bindSystemTheme();
 
-  try {
-    state.manifest = await api.versionsManifest(true);
-    state.installed = await api.versionsInstalled();
-  } catch (e) {
-    toast(`版本清单加载失败：${e.message}`, true);
-  }
-
-  // 选中实例
-  const instances = state.config.instances || {};
-  const selId = state.config.selectedInstance in instances ? state.config.selectedInstance : 'default';
+  // 首屏只依赖本地配置：实例选择 / 账号都在这里同步确定，然后立刻渲染首页。
+  // 版本清单是网络请求，以前 await 它，网络一慢启动后空白近 10 秒 —— 改为后台加载。
+  const instances0 = state.config.instances || {};
+  const selId = state.config.selectedInstance in instances0
+    ? state.config.selectedInstance
+    : firstInstanceId(instances0);
   state.selectedInstance = selId;
   state.account = state.config.account;
   state.accounts = state.config.accounts || [];
@@ -57,6 +53,44 @@ async function init() {
   updateTopUser();
 
   renderPage('home');
+
+  // 版本清单 / 已装版本后台补齐：
+  // 不主动重渲染页面（会打断玩家正在进行的操作），首页版本下拉有自己的局部刷新，
+  // 版本页等在渲染时若发现 manifest 缺失会自取。
+  api.versionsManifest(true).then(async (m) => {
+    state.manifest = m;
+    state.installed = await api.versionsInstalled();
+  }).catch((e) => toast(`版本清单加载失败：${e.message}`, true));
+
+  // 侧栏底部的版本号写死在 HTML 里，打包换版本就会对不上，改成读真实版本；点它跳更新设置
+  api.updaterVersion().then((uv) => {
+    state.updateInfo = uv;
+    const foot = $('foot-status');
+    if (foot) {
+      foot.title = `CM Minecraft Launcher v${uv.version}${uv.portable ? '（免安装版）' : ''} · 点这里检查更新`;
+      foot.onclick = openUpdateSettings;
+      const ver = $('foot-ver');
+      if (ver) ver.textContent = `v${uv.version} · 运行正常`;
+    }
+  }).catch(() => {});
+
+  // 下载进度只有这一个监听口，DOM 不在（没停在设置页更新区）就什么都不做
+  api.onUpdateProgress((p) => {
+    const fill = $('up-fill');
+    if (!fill) return;
+    const track = $('up-progress');
+    if (track) track.hidden = false;
+    fill.style.width = `${p.percent || 0}%`;
+    const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
+    const st = $('up-status');
+    if (st) {
+      st.textContent = `下载中 ${p.percent}% · ${mb(p.received)}${p.total ? ` / ${mb(p.total)}` : ''}`
+        + (p.speed ? ` · ${(p.speed / 1048576).toFixed(1)} MB/s` : '');
+    }
+  });
+
+  // 后台静默查更新，不挡界面
+  autoCheckUpdate();
 }
 
 /** 从主进程刷新账号列表 */
@@ -648,6 +682,56 @@ function askText(title, value = '', placeholder = '') {
   });
 }
 
+/* ========== 选择弹窗 ========== */
+
+/**
+ * 通用二选一弹窗，风格与 askText 一致。
+ * @param {string} title
+ * @param {Array<{value:string,label:string,desc?:string}>} options 2~3 项
+ * @returns {Promise<string|null>} 选中的 value，取消为 null
+ */
+function askChoice(title, options) {
+  return new Promise((resolve) => {
+    const mask = ce('div', 'modal-mask');
+    const items = options.map((o, i) => `
+      <button class="btn ${i === 0 ? 'primary' : ''}" data-v="${o.value}"
+        style="width:100%;text-align:left;margin-bottom:10px;padding:12px 14px">
+        <span style="display:block;font-size:13.5px">${o.label}</span>
+        ${o.desc ? `<span class="hint-text" style="display:block;margin-top:5px;line-height:1.6">${o.desc}</span>` : ''}
+      </button>
+    `).join('');
+    mask.innerHTML = `
+      <div class="modal">
+        <div class="modal-title">${title}</div>
+        <div style="margin:14px 0 6px">${items}</div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="modal-cancel">取消</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      mask.remove();
+      resolve(v);
+    };
+    mask.querySelectorAll('[data-v]').forEach((b) => {
+      b.onclick = () => finish(b.dataset.v);
+    });
+    mask.querySelector('#modal-cancel').onclick = () => finish(null);
+    mask.onclick = (e) => { if (e.target === mask) finish(null); };
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape' && done === false && document.body.contains(mask)) {
+        finish(null);
+        document.removeEventListener('keydown', esc);
+      }
+    });
+  });
+}
+
 /* ========== 实例管理 ========== */
 
 const LOADERS = [
@@ -663,8 +747,30 @@ function loaderName(id) {
   return l ? l.name : (id || '原版');
 }
 
+/**
+ * 从 versionId 提取 MC 版本号。Fabric/Quilt 的 id 以 loader 版本开头
+ * （fabric-loader-0.15.0-1.20.1），不能用开头数字；NeoForge 的 id
+ * （neoforge-21.1.93）里没有 MC 版本，要求版本号前不能紧跟数字/点，
+ * 防止把 21.1.93 截出 1.1.93。提不出来返回 ''，搜索时不带版本过滤。
+ */
+function mcVerOf(versionId) {
+  const m = String(versionId || '').match(/(?:^|[^\d.])(1\.\d+(?:\.\d+)?)/);
+  return m ? m[1] : '';
+}
+
 function instGameDir(inst) {
   return (inst && inst.gameDir) || state.config.gameDir;
+}
+
+/** 实例表中的第一个 id（key 顺序），没有实例时为 ''。default 已可被删除，不能再写死兜底。 */
+function firstInstanceId(map) {
+  const ks = Object.keys(map || {});
+  return ks[0] || '';
+}
+
+/** 当前选中实例；选中项已被删时回落到第一个实例，全空时为 null。 */
+function currentInstanceOf(map, id) {
+  return (map && map[id]) || (map && map[firstInstanceId(map)]) || null;
 }
 
 async function refreshConfig() {
@@ -781,8 +887,8 @@ function renderInstances(page) {
     await doExport(ids[0]);
   };
   $('batch-delete').onclick = async () => {
-    const ids = [...sel].filter((id) => id !== 'default');
-    if (!ids.length) return toast('默认实例不可删除', true);
+    const ids = [...sel];
+    if (!ids.length) return toast('请先选择要删除的实例', true);
     const ok = window.confirm(`确定删除这 ${ids.length} 个实例吗？\n（只移除实例记录，不会删除游戏文件）`);
     if (!ok) return;
     for (const id of ids) await api.instancesDelete(id);
@@ -812,6 +918,7 @@ function instCard(it, sel) {
       <button class="btn sm" data-act="detail">详情</button>
       <button class="btn sm" data-act="folder">目录</button>
       <button class="btn sm ghost" data-act="rename">重命名</button>
+      <button class="btn sm danger" data-act="delete">删除</button>
     </div>
   `;
 
@@ -846,6 +953,11 @@ function instCard(it, sel) {
         const name = await askText('重命名实例', it.name);
         if (!name) return;
         await api.instancesSave(it.id, { ...it, id: undefined, name });
+        await refreshConfig();
+        renderPage('instances');
+      } else if (act === 'delete') {
+        if (!window.confirm(`删除实例「${it.name}」？\n（只移除实例记录，不会删除游戏文件）`)) return;
+        await api.instancesDelete(it.id);
         await refreshConfig();
         renderPage('instances');
       }
@@ -1617,8 +1729,7 @@ async function loadInstanceSettings(inst, gameDir, body) {
   };
   $('is-export').onclick = () => doExport(state.currentInstanceId);
   $('is-delete').onclick = async () => {
-    if (state.currentInstanceId === 'default') return toast('默认实例不可删除', true);
-    if (!window.confirm(`删除实例「${inst.name}」？`)) return;
+    if (!window.confirm(`删除实例「${inst.name}」？\n（只移除实例记录，不会删除游戏文件）`)) return;
     await api.instancesDelete(state.currentInstanceId);
     await refreshConfig();
     renderPage('instances');
@@ -1656,6 +1767,7 @@ function renderHome(page) {
         <div class="hero-badges">
           <button class="hero-badge accent" id="hero-badge-new">＋ 安装新版本</button>
           <button class="hero-badge" id="hero-badge-acc">👤 ${accName}</button>
+          <button class="hero-badge accent" id="hero-badge-update" hidden>⬆ 发现新版本</button>
         </div>
         <div class="hero-server-row">
           <input class="hero-server-input" id="hero-server" placeholder="可选：填写服务器 IP 直接进入（暂存，启动后生效）">
@@ -1743,13 +1855,23 @@ function renderHome(page) {
     renderPage('home');
   };
 
-  $('home-play').onclick = () => onPlay();
+  $('home-play').onclick = () => {
+    // 所有实例都被删光时：不发空启动，引导安装（顶部「＋ 安装新版本」也能点）
+    if (!Object.keys(instances).length) {
+      toast('还没有实例，点「＋ 安装新版本」下载一个吧', true);
+      return;
+    }
+    onPlay();
+  };
   $('home-cancel').onclick = () => {
     api.cancel();
     hideHomeProgress();
   };
-  $('hero-badge-new').onclick = () => renderPage('versions');
+  $('hero-badge-new').onclick = () => openVersionInstaller();
   $('hero-badge-acc').onclick = () => renderPage('account');
+  $('hero-badge-update').onclick = openUpdateSettings;
+  // 模板重建后徽章的 hidden 是初始值，得按当前是否查到新版再摆一次
+  paintUpdateDot();
   $('hero-options').onclick = () => renderPage('settings');
   $('qa-ver').onclick = () => renderPage('versions');
   $('qa-res').onclick = () => renderPage('center');
@@ -2153,7 +2275,7 @@ function widgetPinnedServers(host, list, head) {
 function widgetRecentWorlds(host) {
   host.innerHTML = '<div class="widget-empty">读取中…</div>';
   const instances = state.config.instances || {};
-  const inst = instances[state.selectedInstance] || instances.default;
+  const inst = currentInstanceOf(instances, state.selectedInstance);
   const gameDir = (inst && inst.gameDir) || state.config.gameDir;
   api.contentSaves(gameDir).then((saves) => {
     if (!host.isConnected) return;
@@ -2337,7 +2459,7 @@ async function openPinManager(kind) {
   } else {
     // 世界：需要读当前实例的存档
     const instances = state.config.instances || {};
-    const inst = instances[state.selectedInstance] || instances.default;
+    const inst = currentInstanceOf(instances, state.selectedInstance);
     const gameDir = (inst && inst.gameDir) || state.config.gameDir;
     let saves = homeRecentSaves;
     if (!saves) {
@@ -2478,15 +2600,474 @@ function hideHomeProgress() {
   if (panel) panel.style.display = 'none';
 }
 
+/* ========== 下载版本（二级菜单：加载器前置 → 版本 → 一起下载） ========== */
+
+const RANDOM_INST_WORDS = ['方块世界', '橡木小屋', '下界探险', '红石工坊', '钻石矿洞', '末地远征', '蘑菇岛', '雪原营地', '深海神殿', '丛林秘境'];
+
+function randomInstanceName() {
+  const w = RANDOM_INST_WORDS[Math.floor(Math.random() * RANDOM_INST_WORDS.length)];
+  return `${w}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+/**
+ * 下载一个游戏版本，必要时把 Mod 加载器也装好。
+ * 返回可直接写进实例的版本号（原版就是 MC 版本号，带加载器就是加载器自己的版本号）。
+ */
+async function downloadVersionWithLoader(sel, gameDir, onStep) {
+  islandNotify({
+    ico: '⬇️',
+    title: `开始下载 ${sel.mcVersion}`,
+    desc: sel.loader === 'vanilla'
+      ? '原版游戏文件'
+      : `游戏文件 + ${loaderName(sel.loader)} 加载器`,
+  });
+  onStep(`下载 ${sel.mcVersion} 游戏文件…`);
+  await api.versionsDownload(sel.mcVersion, gameDir);
+
+  if (sel.loader === 'vanilla' || !sel.loaderVersion) return sel.mcVersion;
+
+  onStep(`安装 ${loaderName(sel.loader)} ${sel.loaderVersion}…`);
+  let versionId = '';
+  if (sel.loader === 'forge') {
+    let javaPath = state.config.javaPath;
+    if (!javaPath) {
+      const m = await api.javaMatch(sel.mcVersion).catch(() => null);
+      javaPath = m && m.picked && m.picked.path;
+    }
+    if (!javaPath) throw new Error('安装 Forge 需要 Java，请先在设置里下载或指定 Java');
+    versionId = await api.forgeInstall(sel.mcVersion, sel.loaderVersion, gameDir, javaPath);
+  } else if (sel.loader === 'fabric') {
+    versionId = await api.fabricInstall(sel.mcVersion, sel.loaderVersion, gameDir);
+  } else if (sel.loader === 'quilt') {
+    versionId = await api.quiltInstall(sel.mcVersion, sel.loaderVersion, gameDir);
+  } else {
+    throw new Error(`${loaderName(sel.loader)} 暂不支持自动安装`);
+  }
+
+  // 加载器自己的库也一起下好，否则第一次启动还得现场下载几分钟
+  if (versionId) {
+    onStep('下载加载器依赖…');
+    await api.versionsDownload(versionId, gameDir);
+  }
+  return versionId || sel.mcVersion;
+}
+
+/**
+ * 版本下载成功后的统一收尾：新建一个随机名实例并选中，弹窗允许改名，然后跳到实例管理。
+ * 下载失败时不要调用，保证不留残实例。
+ * @returns {Promise<string>} 新实例 id
+ */
+async function finalizeNewInstance(versionId, loader, loaderVersion, gameDir) {
+  // 下载成功才建实例：失败不留残实例
+  const id = `inst_${Date.now().toString(36)}`;
+  const autoName = randomInstanceName();
+  await api.instancesSave(id, {
+    name: autoName,
+    versionId,
+    gameDir,
+    modLoader: loader,
+    loaderVersion: loaderVersion || '',
+    javaPath: '',
+    memory: null,
+    jvmArgs: '',
+    icon: '⛏',
+    group: '',
+  });
+  await api.configSet('selectedInstance', id);
+  await refreshConfig();
+  state.selectedInstance = id;
+
+  const renamed = await askText('实例已创建，可以改个名字', autoName, '给这个实例起个名字');
+  if (renamed && renamed !== autoName) {
+    await api.instancesSave(id, { name: renamed });
+    await refreshConfig();
+  }
+  toast(`已下载 ${versionId}，实例已建好`);
+  renderPage('instances');
+  return id;
+}
+
+/**
+ * 模组下载二级菜单：列出该模组的所有版本（默认自动选中与当前实例匹配的
+ * 最新一版），实时检测所选版本的前置模组（必装依赖），确认后连同前置
+ * 一起下载到实例的 mods 目录。已在本地存在的前置文件会自动跳过。
+ */
+async function openModVersionPicker(m, inst) {
+  const gv = mcVerOf(inst.versionId);
+  const gl = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
+  const gdir = instGameDir(inst);
+
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal wide">
+      <div class="modal-title">下载 ${escapeHtml(m.name)}</div>
+      <div class="hint-text" id="mvp-hint">正在获取版本列表…</div>
+      <div class="field">
+        <label>选择版本</label>
+        <div id="mvp-versions" style="max-height:260px;overflow:auto"></div>
+      </div>
+      <div class="field" id="mvp-deps-field" style="display:none">
+        <label>前置模组检测</label>
+        <div id="mvp-deps" style="font-size:13px"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="mvp-cancel">取消</button>
+        <button class="btn primary" id="mvp-ok" disabled>下载</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('#mvp-cancel').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  const hintEl = mask.querySelector('#mvp-hint');
+  const listEl = mask.querySelector('#mvp-versions');
+  const depsField = mask.querySelector('#mvp-deps-field');
+  const depsEl = mask.querySelector('#mvp-deps');
+  const okBtn = mask.querySelector('#mvp-ok');
+
+  // 版本列表：优先当前实例的 MC 版本+加载器，一条都没有时退到全部版本
+  let vers = [];
+  try {
+    vers = await api.mrVersions(m.id, gv, gl);
+    if (vers.length === 0) {
+      vers = await api.mrVersions(m.id, '', '');
+      hintEl.textContent = `该模组没有匹配 ${inst.versionId || '当前实例'} 的版本，以下显示全部版本（注意兼容性）。`;
+    } else {
+      hintEl.textContent = `已按当前实例（${inst.versionId} · ${loaderName(inst.modLoader)}）过滤，默认选中最新匹配版。`;
+    }
+  } catch (e) {
+    hintEl.textContent = '获取版本列表失败：' + e.message;
+    return;
+  }
+  if (vers.length === 0) { hintEl.textContent = '该模组还没有发布任何版本。'; return; }
+
+  // 前置项目名缓存，避免同一弹窗里重复请求
+  const projCache = new Map();
+  const projectName = async (pid) => {
+    if (!projCache.has(pid)) {
+      projCache.set(pid, api.mrProject(pid).then((p) => p.title || pid).catch(() => pid));
+    }
+    return projCache.get(pid);
+  };
+
+  let picked = vers[0];
+  const renderDeps = async (v) => {
+    const required = (v.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id);
+    const optional = (v.dependencies || []).filter((d) => d.dependency_type === 'optional' && d.project_id);
+    if (required.length === 0 && optional.length === 0) {
+      depsField.style.display = 'none';
+      return;
+    }
+    depsField.style.display = '';
+    depsEl.innerHTML = '<div style="color:var(--text-dim)">检测前置中…</div>';
+    const rows = [];
+    for (const d of required) rows.push(`<div>🧩 <b>${escapeHtml(await projectName(d.project_id))}</b> <span style="color:#fbbf24">必装 · 将一并下载</span></div>`);
+    for (const d of optional) rows.push(`<div>🧩 ${escapeHtml(await projectName(d.project_id))} <span style="color:var(--text-dim)">可选 · 不下载</span></div>`);
+    depsEl.innerHTML = rows.join('');
+  };
+
+  listEl.innerHTML = vers.map((v, i) => `
+    <label class="glass" style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="mvp-v" value="${i}" ${i === 0 ? 'checked' : ''}>
+      <span style="flex:1">
+        <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span></div>
+        <div style="color:var(--text-dim);font-size:12px">${v.gameVersions.join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
+      </span>
+    </label>
+  `).join('');
+  listEl.querySelectorAll('input[name="mvp-v"]').forEach((r) => {
+    r.onchange = () => { picked = vers[Number(r.value)]; renderDeps(picked); };
+  });
+  okBtn.disabled = false;
+  renderDeps(picked);
+
+  okBtn.onclick = async () => {
+    const file = picked.files.find((f) => f.primary) || picked.files[0];
+    if (!file) { toast('该版本没有可下载的文件', true); return; }
+    okBtn.disabled = true;
+    try {
+      showLoading(`下载 ${m.name}…`);
+      await api.mrDownload(file, gdir, 'mod');
+
+      // 必装前置：解析到同 MC 版本+加载器的最新文件，mods 里已有同名文件就跳过
+      const required = (picked.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id);
+      const depNotes = [];
+      if (required.length > 0) {
+        const existing = new Set((await api.modsList(gdir).catch(() => [])).map((x) => x.name));
+        for (const d of required) {
+          const name = await projectName(d.project_id);
+          try {
+            const dvers = await api.mrVersions(d.project_id, gv, gl);
+            const dv = dvers[0];
+            const dfile = dv && (dv.files.find((f) => f.primary) || dv.files[0]);
+            if (!dfile) { depNotes.push(`${name}（无匹配版本，需手动安装）`); continue; }
+            if (existing.has(dfile.name)) { depNotes.push(`${name}（已存在，跳过）`); continue; }
+            await api.mrDownload(dfile, gdir, 'mod');
+            depNotes.push(`${name} ✓`);
+          } catch {
+            depNotes.push(`${name}（下载失败，需手动安装）`);
+          }
+        }
+      }
+      close();
+      toast(depNotes.length > 0 ? `${m.name} 下载成功。前置：${depNotes.join('、')}` : `${m.name} 下载成功`);
+    } catch (e) {
+      toast(e.message, true);
+      okBtn.disabled = false;
+    } finally {
+      hideLoading();
+    }
+  };
+}
+
+/**
+ * 二级菜单：先选 Mod 加载器（前置），再选游戏版本与加载器版本，确认后一起下载。
+ * 返回 { versionId, modLoader, loaderVersion }，取消或失败返回 null。
+ */
+async function openVersionInstaller(opts = {}) {
+  const mode = opts.mode || 'new';
+  const targetId = opts.instanceId || state.selectedInstance;
+  const gameDir = opts.gameDir || state.config.gameDir || '';
+  const title = opts.title || (mode === 'fill' ? '先补齐版本与加载器' : '下载游戏版本');
+
+  if (!state.manifest) {
+    try { state.manifest = await api.versionsManifest(false); }
+    catch (e) { toast('版本清单还没加载好：' + e.message, true); return null; }
+  }
+
+  let vtype = 'release';
+  let loader = opts.loader || 'vanilla';
+
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal wide">
+      <div class="modal-title">${title}</div>
+      <div class="field">
+        <label>① Mod 加载器</label>
+        <div class="tabs" id="vi-loaders">
+          <button class="tab" data-loader="vanilla">原版</button>
+          <button class="tab" data-loader="forge">Forge</button>
+          <button class="tab" data-loader="neoforge">NeoForge</button>
+          <button class="tab" data-loader="fabric">Fabric</button>
+          <button class="tab" data-loader="quilt">Quilt</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>② 游戏版本</label>
+        <div class="tabs" id="vi-vtype">
+          <button class="tab" data-vtype="release">正式版</button>
+          <button class="tab" data-vtype="snapshot">快照版</button>
+          <button class="tab" data-vtype="all">全部</button>
+        </div>
+        <select class="input" id="vi-version" style="margin-top:10px"></select>
+      </div>
+      <div class="field" id="vi-loaderbox"></div>
+      <div class="hint-text" id="vi-hint" style="margin-bottom:6px">
+        ${mode === 'fill'
+          ? '补齐后会自动写进当前实例，然后继续下载。'
+          : '下载完成后会自动在「实例管理」建一个随机名实例，名字随时可以改。'}
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="vi-cancel">取消</button>
+        <button class="btn primary" id="vi-ok">开始下载</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+
+  // 取消 / 确认都必须 resolve：以前取消只移除弹窗，Promise 一直挂着，
+  // 调用方 await 永远不返回（资源中心下载会整个卡死）。
+  let resolver = null;
+  const resultP = new Promise((r) => { resolver = r; });
+
+  const close = () => mask.remove();
+  const cancelInstaller = () => { close(); if (resolver) resolver(null); };
+  mask.querySelector('#vi-cancel').onclick = cancelInstaller;
+  mask.onclick = (e) => { if (e.target === mask) cancelInstaller(); };
+  const fail = (msg) => { toast(msg, true); resolver(null); };
+
+  const pickTabs = (sel, attr, value) => {
+    mask.querySelectorAll(`${sel} .tab`).forEach((x) => x.classList.toggle('active', x.dataset[attr] === value));
+  };
+
+  const fillVersions = () => {
+    const sel = mask.querySelector('#vi-version');
+    const prev = sel.value;
+    let list = (state.manifest && state.manifest.versions) || [];
+    if (vtype === 'release') list = list.filter((v) => v.type === 'release');
+    else if (vtype === 'snapshot') list = list.filter((v) => v.type === 'snapshot');
+    sel.innerHTML = '';
+    list.forEach((v) => {
+      const o = ce('option');
+      o.value = v.id;
+      o.textContent = v.id;
+      sel.appendChild(o);
+    });
+    if (list.some((v) => v.id === prev)) sel.value = prev;
+  };
+
+  const renderLoaderBox = async () => {
+    const box = mask.querySelector('#vi-loaderbox');
+    if (loader === 'vanilla') {
+      box.innerHTML = '<label>③ 加载器版本</label><div class="hint-text">原版不带 Mod 加载器，进游戏也装不了模组</div>';
+      return;
+    }
+    box.innerHTML = '<label>③ 加载器版本</label><div class="hint-text">加载中…</div>';
+    const mc = mask.querySelector('#vi-version').value;
+    try {
+      let list;
+      if (loader === 'forge') {
+        list = (await api.forgeVersions(mc)).map((v) => ({ v: v.version, tag: v.isRecommended ? '（推荐）' : v.isLatest ? '（最新）' : '' }));
+      } else if (loader === 'neoforge') {
+        list = (await api.neoForgeVersions(mc)).map((v) => ({ v: v.version, tag: '' }));
+      } else if (loader === 'fabric') {
+        list = (await api.fabricLoaders()).map((v) => ({ v: v.version, tag: v.stable ? '（稳定）' : '' }));
+      } else {
+        list = (await api.quiltLoaders()).map((v) => ({ v: v.version, tag: v.stable ? '（稳定）' : '' }));
+      }
+      if (!list.length) {
+        box.innerHTML = `<label>③ 加载器版本</label><div class="hint-text">${mc} 没有可用的 ${loaderName(loader)} 版本，换个游戏版本或加载器试试</div>`;
+        return;
+      }
+      box.innerHTML = '<label>③ 加载器版本</label><select class="input" id="vi-lv"></select>';
+      const ls = box.querySelector('#vi-lv');
+      list.forEach((x) => {
+        const o = ce('option');
+        o.value = x.v;
+        o.textContent = x.v + x.tag;
+        ls.appendChild(o);
+      });
+    } catch (e) {
+      box.innerHTML = `<label>③ 加载器版本</label><div class="hint-text" style="color:#fca5a5">加载失败：${e.message}</div>`;
+    }
+  };
+
+  mask.querySelectorAll('#vi-loaders .tab').forEach((t) => {
+    t.onclick = () => { loader = t.dataset.loader; pickTabs('#vi-loaders', 'loader', loader); renderLoaderBox(); };
+  });
+  mask.querySelectorAll('#vi-vtype .tab').forEach((t) => {
+    t.onclick = () => {
+      vtype = t.dataset.vtype;
+      pickTabs('#vi-vtype', 'vtype', vtype);
+      fillVersions();
+      renderLoaderBox();
+    };
+  });
+  mask.querySelector('#vi-version').onchange = () => renderLoaderBox();
+
+  pickTabs('#vi-loaders', 'loader', loader);
+  pickTabs('#vi-vtype', 'vtype', vtype);
+  fillVersions();
+  renderLoaderBox();
+
+  mask.querySelector('#vi-ok').onclick = async () => {
+      const mcVersion = mask.querySelector('#vi-version').value;
+      if (!mcVersion) return fail('先选一个游戏版本');
+      let loaderVersion = '';
+      if (loader !== 'vanilla') {
+        const lv = mask.querySelector('#vi-lv');
+        if (!lv) return fail(`${loaderName(loader)} 的版本还没准备好`);
+        loaderVersion = lv.value;
+      }
+      const sel = { mcVersion, loader, loaderVersion };
+
+      close();
+      const onStep = (t) => {
+        state.installStep = t;
+        if (state.currentPage === 'home' && $('home-progress')) showHomeProgress(t, 0);
+        else showLoading(t);
+      };
+      try {
+        onStep('正在下载游戏文件…');
+        const versionId = await downloadVersionWithLoader(sel, gameDir, onStep);
+        hideLoading();
+        hideHomeProgress();
+        state.installStep = '';
+        const result = { versionId, modLoader: sel.loader, loaderVersion: sel.loaderVersion };
+
+        if (mode === 'fill') {
+          await api.instancesSave(targetId, {
+            versionId,
+            modLoader: sel.loader,
+            loaderVersion: sel.loaderVersion,
+          });
+          await refreshConfig();
+          toast(`已为实例配好 ${versionId}`);
+          resolver(result);
+          return;
+        }
+
+        // 下载成功才建实例（统一收尾）：失败不留残实例
+        await finalizeNewInstance(versionId, sel.loader, sel.loaderVersion, gameDir);
+        resolver(result);
+      } catch (e) {
+        hideLoading();
+        hideHomeProgress();
+        state.installStep = '';
+        resolver(null);
+        toast('下载失败：' + e.message, true);
+      }
+    };
+
+  return resultP;
+}
+
+/**
+ * 资源中心下载前置：实例还没配好版本就先把二级菜单弹出来补齐。
+ * 返回「补齐后」的实例对象；用户取消则返回 null（调用方应中止下载）。
+ */
+async function ensureRuntime(inst, loaderHint) {
+  if (inst && inst.versionId) return inst;
+  const id = state.selectedInstance;
+  const loader = loaderHint
+    || (inst && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric');
+  const r = await openVersionInstaller({
+    mode: 'fill',
+    instanceId: id,
+    gameDir: instGameDir(inst),
+    loader,
+  });
+  if (!r) return null;
+  return state.config.instances[id] || inst;
+}
+
 /* ========== 版本管理 ========== */
 
 function renderVersions(page) {
   const instances = state.config.instances || {};
-  const inst = instances[state.selectedInstance] || instances.default;
+  const inst = currentInstanceOf(instances, state.selectedInstance);
+
+  // 一个实例都没有时（默认实例也被删了）：不硬套实例，直接给下载入口
+  if (!inst) {
+    page.innerHTML = `
+      <div class="page-title">版本管理</div>
+      <div class="glass" style="padding:36px;text-align:center">
+        <div style="font-size:42px;margin-bottom:12px">📦</div>
+        <div style="font-size:15px;margin-bottom:6px">还没有任何实例</div>
+        <div class="hint-text" style="margin-bottom:20px">下载一个游戏版本，会自动为你建好实例</div>
+        <button class="btn primary" id="ver-empty-download">下载游戏版本</button>
+      </div>
+    `;
+    $('ver-empty-download').onclick = async () => {
+      const r = await openVersionInstaller({ mode: 'new' });
+      if (r) renderPage('versions');
+    };
+    return;
+  }
+
+  // manifest 还在后台加载时（首屏不再等它）：版本下拉先空，好了自取刷新一次
+  if (!state.manifest) {
+    api.versionsManifest(false).then((m) => {
+      state.manifest = m;
+      if (state.currentPage === 'versions') renderPage('versions');
+    }).catch(() => {});
+  }
 
   page.innerHTML = `
     <div class="page-title">版本管理</div>
-    <div class="page-sub">为实例「${inst.name}」选择游戏版本与 Mod 加载器</div>
+    <div class="page-sub">为实例「${inst.name}」选择游戏版本与 Mod 加载器 · 下载完成后会新建一个实例，不替换本实例</div>
 
     <div class="glass" style="padding:22px;margin-bottom:18px">
       <div class="field">
@@ -2513,7 +3094,7 @@ function renderVersions(page) {
       </div>
       <div id="loader-config"></div>
       <div class="row" style="margin-top:8px">
-        <button class="btn primary" id="ver-save">保存到实例</button>
+        <button class="btn primary" id="ver-save">下载并新建实例</button>
         <button class="btn" id="ver-open-dir">打开游戏目录</button>
       </div>
     </div>
@@ -2642,44 +3223,31 @@ function renderVersions(page) {
 
   $('ver-save').onclick = async () => {
     const mcVersion = sel.value;
+    if (!mcVersion) return toast('先选一个游戏版本', true);
     let loaderVersion = '';
     if (currentLoader === 'forge') loaderVersion = $('forge-select').value;
     else if (currentLoader !== 'vanilla') loaderVersion = $('loader-select').value;
 
-    api.instancesSave(state.selectedInstance, {
-      versionId: mcVersion,
-      modLoader: currentLoader,
-      loaderVersion,
-    });
-    state.config = await api.configGetAll();
-
-    // 如果是 Forge/Fabric/Quilt，执行安装
-    if (currentLoader !== 'vanilla' && loaderVersion) {
-      showLoading('安装 Mod 加载器…');
-      try {
-        const javaPath = state.config.javaPath || inst.javaPath;
-        if (currentLoader === 'forge') {
-          if (!javaPath) throw new Error('安装 Forge 需要先在设置中指定 Java');
-          await api.forgeInstall(mcVersion, loaderVersion, inst.gameDir, javaPath);
-        } else if (currentLoader === 'fabric') {
-          await api.fabricInstall(mcVersion, loaderVersion, inst.gameDir);
-        } else if (currentLoader === 'quilt') {
-          await api.quiltInstall(mcVersion, loaderVersion, inst.gameDir);
-        }
-        toast('Mod 加载器安装成功');
-      } catch (e) {
-        toast(e.message, true);
-      } finally {
-        hideLoading();
-        state.installed = await api.versionsInstalled();
-        renderPage('versions');
-      }
-    } else {
-      toast('已保存到实例');
+    // 下载完成后「新建一个实例」，不再写回/替换当前实例 —— 下载版本即添置新实例。
+    // 与首页「下载版本」流程保持同一行为，文件统一进全局游戏目录。
+    const gameDir = state.config.gameDir;
+    try {
+      showLoading(`下载 ${mcVersion}…`);
+      const versionId = await downloadVersionWithLoader(
+        { mcVersion, loader: currentLoader, loaderVersion },
+        gameDir,
+        (t) => { if ($('loading-text')) $('loading-text').textContent = t; },
+      );
+      hideLoading();
+      state.installed = await api.versionsInstalled(gameDir);
+      await finalizeNewInstance(versionId, currentLoader, loaderVersion, gameDir);
+    } catch (e) {
+      hideLoading();
+      toast('下载失败：' + e.message, true);
     }
   };
 
-  $('ver-open-dir').onclick = () => api.openUrl('file:///' + instGameDir(inst).replace(/\\/g, '/'));
+  $('ver-open-dir').onclick = () => api.openPath(instGameDir(inst));
 
   // 已安装列表
   // 这些卡片以前是死的（没 handler、没按钮）：下载好的版本在这里看得见却用不上。
@@ -2775,7 +3343,25 @@ let centerCat = 'mod';
 
 function renderCenter(page) {
   const instances = state.config.instances || {};
-  const inst = instances[state.selectedInstance] || instances.default;
+  const inst = currentInstanceOf(instances, state.selectedInstance);
+
+  // 没有实例时下载内容无处安放：先引导下载版本建实例
+  if (!inst) {
+    page.innerHTML = `
+      <div class="page-title">模组中心</div>
+      <div class="glass" style="padding:36px;text-align:center">
+        <div style="font-size:42px;margin-bottom:12px">🧩</div>
+        <div style="font-size:15px;margin-bottom:6px">还没有任何实例</div>
+        <div class="hint-text" style="margin-bottom:20px">先下载一个游戏版本建好实例，再来下载模组和资源</div>
+        <button class="btn primary" id="center-empty-download">下载游戏版本</button>
+      </div>
+    `;
+    $('center-empty-download').onclick = async () => {
+      const r = await openVersionInstaller({ mode: 'new' });
+      if (r) renderPage('center');
+    };
+    return;
+  }
 
   page.innerHTML = `
     <div class="page-title">模组中心</div>
@@ -2873,7 +3459,7 @@ function renderModCategory(inst, box) {
 
   const renderOnline = (source) => {
     const mbox = $('mod-content');
-    const mcVersion = inst.versionId ? inst.versionId.match(/^[\d.]+/)?.[0] : '';
+    const mcVersion = mcVerOf(inst.versionId);
     const loader = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
     mbox.innerHTML = `
       <div class="search-bar">
@@ -2909,20 +3495,22 @@ function renderModCategory(inst, box) {
             </div>
           `;
           card.querySelector('[data-act="download"]').onclick = async () => {
+            // 下载前置：实例还没配好版本 / 加载器，先弹二级菜单补齐，取消就不下了
+            const fresh = await ensureRuntime(inst);
+            if (!fresh) return;
+            if (source === 'modrinth') {
+              openModVersionPicker(m, fresh);
+              return;
+            }
+            // CurseForge 源没有版本/依赖元数据，保持旧的直取最新逻辑
+            const gv = mcVerOf(fresh.versionId);
+            const gdir = instGameDir(fresh);
             try {
-              let file;
-              if (source === 'modrinth') {
-                const vers = await api.mrVersions(m.id, mcVersion, loader);
-                const v = vers[0];
-                file = v.files.find((f) => f.primary) || v.files[0];
-              } else {
-                const files = await api.cfFiles(m.id, mcVersion);
-                file = files.find((f) => f.releaseType === 1) || files[0];
-              }
+              const files = await api.cfFiles(m.id, gv);
+              const file = files.find((f) => f.releaseType === 1) || files[0];
               if (!file) throw new Error('没有可用的文件版本');
               showLoading(`下载 ${m.name}…`);
-              if (source === 'modrinth') await api.mrDownload(file, inst.gameDir, 'mod');
-              else await api.cfDownload(file, inst.gameDir);
+              await api.cfDownload(file, gdir);
               toast(`${m.name} 下载成功`);
             } catch (e) {
               toast(e.message, true);
@@ -2979,7 +3567,7 @@ const RES_META = {
 
 function renderResourceCategory(inst, box, cat) {
   const meta = RES_META[cat];
-  const mcVersion = inst.versionId ? inst.versionId.match(/^[\d.]+/)?.[0] : '';
+  const mcVersion = mcVerOf(inst.versionId);
 
   box.innerHTML = `
     <div class="glass" style="padding:14px 18px;margin-bottom:14px;color:var(--text-dim);font-size:13px">
@@ -3019,13 +3607,17 @@ function renderResourceCategory(inst, box, cat) {
           </div>
         `;
         card.querySelector('[data-act="download"]').onclick = async () => {
+          // 下载前置：光影 / 资源包要实例先选好版本才下得准；数据包是按存档放的，不强求
+          const fresh = cat === 'datapack' ? inst : await ensureRuntime(inst, 'vanilla');
+          if (!fresh) return;
+          const gv = mcVerOf(fresh.versionId) || mcVersion;
           try {
-            const vers = await api.mrVersions(m.id, mcVersion, '');
+            const vers = await api.mrVersions(m.id, gv, '');
             const v = vers[0];
             const file = v.files.find((f) => f.primary) || v.files[0];
             if (!file) throw new Error('没有可用的文件版本');
             showLoading(`下载 ${m.name}…`);
-            await api.mrDownload(file, inst.gameDir, cat);
+            await api.mrDownload(file, instGameDir(fresh), cat);
             toast(`${m.name} 下载成功`);
           } catch (e) {
             toast(e.message, true);
@@ -3244,7 +3836,7 @@ function renderServers(page) {
     </div>
 
     <div class="lan-grid">
-      <div class="glass lan-card lan-wide">
+      <div class="glass lan-card lan-wide" id="lan-card-taohua">
         <div class="lan-title">🏺 陶瓦联机<span class="lan-ok" id="tc-badge">已内置</span></div>
         <div class="lan-desc">跨网络联机，效果跟同一个局域网一样。这套工具<b>已经随启动器装好了</b>，不用下载、不用自己找文件、不用开它的窗口：建房只要填个房间名，加入只要填房主的房间号。</div>
 
@@ -3289,7 +3881,7 @@ function renderServers(page) {
         </div>
       </div>
 
-      <div class="glass lan-card lan-wide">
+      <div class="glass lan-card lan-wide" id="lan-card-easytier">
         <div class="lan-title">🛰️ EasyTier 联机<span class="lan-ok" id="et-badge">已内置</span></div>
         <div class="lan-desc">另一种跨网络联机方式，和陶瓦互补：陶瓦是点对点打洞，EasyTier 组的是<b>虚拟局域网</b>，接上以后两边网段整个互通。同样已经装好了，不用下载、也不用自己找文件。</div>
 
@@ -3643,7 +4235,8 @@ function renderServers(page) {
           <div class="lan-tool-name">${escapeHtml(t.name)}${tag(t)}</div>
           <div class="lan-tool-status" title="${escapeHtml(t.path || '')}">${escapeHtml(status(t))}</div>
         </div>
-        ${t.found ? `<button class="btn sm primary" data-lan-run="${t.id}">启动</button>` : ''}
+        ${t.found && !t.bundled ? `<button class="btn sm primary" data-lan-run="${t.id}">启动</button>` : ''}
+        ${t.bundled ? `<button class="btn sm" data-lan-goto="${t.id}">↑ 用上面卡片</button>` : ''}
         ${t.custom
           ? `<button class="btn sm" data-lan-pick="custom">指定</button>`
           : t.bundled
@@ -3691,7 +4284,7 @@ function renderServers(page) {
       };
     });
 
-    // 只提供安装程序的工具：直接开系统浏览器去官网下载页
+    // 只提供安装程序的工具：开内置浏览器去官网下载页
     box.querySelectorAll('[data-lan-page]').forEach((b) => {
       b.onclick = () => api.openUrl(b.dataset.lanPage);
     });
@@ -3718,6 +4311,16 @@ function renderServers(page) {
           const r = await api.lanLaunch(b.dataset.lanRun);
           toast(`已启动：${r.path.split(/[\\/]/).pop()}`);
         } catch (e) { toast('启动失败：' + e.message, true); }
+      };
+    });
+
+    // 内置工具已经在上面卡片无窗口集成：直接启动 exe 只会强开系统浏览器弹它的 Web 界面，
+    // 多余还添乱。这里点一下直接滚回上面对应的联机卡片。
+    box.querySelectorAll('[data-lan-goto]').forEach((b) => {
+      b.onclick = () => {
+        const anchor = $(`lan-card-${b.dataset.lanGoto}`);
+        if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        toast('用上面的卡片直接建房 / 加入就行');
       };
     });
   };
@@ -4279,7 +4882,8 @@ function renderAccount(page) {
     try {
       state.account = await api.authOffline(name);
       refreshAccounts();
-      toast(`离线登录成功：${state.account.username}`);
+      updateTopUser();
+      toast(`离线登录成功：${state.account.username}`, false, { ico: '✅', desc: '欢迎回来' });
       renderAccount(page);
     } catch (e) { toast(e.message, true); }
   };
@@ -4288,6 +4892,11 @@ function renderAccount(page) {
     const btn = $('ms-login');
     btn.disabled = true;
     btn.textContent = '正在获取验证码…';
+    islandNotify({
+      ico: '🔐',
+      title: '正在登录微软账号',
+      desc: '授权页会在内置浏览器里自动打开',
+    });
 
     // 监听设备码推送
     const dcPanel = $('device-code-panel');
@@ -4339,7 +4948,7 @@ function renderAccount(page) {
       offDc();
       refreshAccounts();
       updateTopUser();
-      toast(`正版登录成功：${state.account.username}`);
+      toast(`正版登录成功：${state.account.username}`, false, { ico: '✅', desc: '欢迎回来' });
       renderAccount(page);
     } catch (e) {
       offDc();
@@ -4373,7 +4982,8 @@ function renderAccount(page) {
     try {
       state.account = await api.authYggdrasil({ baseUrl, username, password });
       refreshAccounts();
-      toast(`皮肤站登录成功：${state.account.username}`);
+      updateTopUser();
+      toast(`皮肤站登录成功：${state.account.username}`, false, { ico: '✅', desc: '欢迎回来' });
       renderAccount(page);
     } catch (e) { toast(e.message, true); }
   };
@@ -4528,6 +5138,12 @@ function renderSkins(page) {
           <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${acc ? (isMs ? '微软正版' : acc.type === 'yggdrasil' ? '外置皮肤站' : '离线账号') : '未登录'}</div>
           <div class="hint-text" id="skin-src" style="margin-top:8px">正在读取当前皮肤…</div>
           <button class="btn sm" id="skin-src-reset" type="button" style="display:none;margin-top:8px">用回当前皮肤</button>
+        </div>
+
+        <div class="panel" style="padding:18px;margin-top:16px">
+          <div class="section-title">最近使用</div>
+          <div class="hint-text" style="margin-bottom:10px">点皮肤或「使用」即可立刻换上，每个账号各记各的</div>
+          <div id="skin-hist" class="skin-grid"><div class="hint-text">加载中…</div></div>
         </div>
 
         <div class="panel" style="padding:18px;margin-top:16px">
@@ -4755,6 +5371,53 @@ function renderSkins(page) {
   $('skin-lib-prev').onclick = () => loadLibrary(Math.max(1, skinLibPage - 1));
   $('skin-lib-next').onclick = () => loadLibrary(skinLibPage + 1);
 
+  /* ---------- 最近使用 ---------- */
+  // 「使用」动作：最近使用区与本地皮肤库共用
+  function bindUseSkin(scope) {
+    scope.querySelectorAll('[data-use-skin]').forEach((b) => {
+      b.onclick = async () => {
+        showLoading('正在切换皮肤…');
+        try {
+          await api.skinUse(b.dataset.useSkin);
+          skinPicked = null;               // 清掉待上传预览，避免预览仍停在旧选择
+          await refreshSkinPreview();
+          resetAccountHead();              // 顶栏头像立刻换
+          toast('已切换皮肤');
+          loadHistory();
+        } catch (e) {
+          toast('切换失败：' + e.message, true);
+        } finally {
+          hideLoading();
+        }
+      };
+    });
+  }
+
+  async function loadHistory() {
+    const box = $('skin-hist');
+    if (!box) return;
+    try {
+      const list = await api.skinHistory();
+      if (!box.isConnected) return;
+      if (!list.length) { box.innerHTML = '<div class="hint-text">还没有用过的皮肤</div>'; return; }
+      box.innerHTML = list.map((s) => skinPreviewCard(
+        s.dataUrl || '',
+        s.name,
+        timeAgo(s.t),
+        `<button class="btn sm primary" data-use-skin="${escapeHtml(s.path)}">使用</button>`,
+      )).join('');
+      bindUseSkin(box);
+      // 点缩略图本身也能直接换，不用非得瞄准小按钮
+      box.querySelectorAll('.skin-cell').forEach((cell) => {
+        const btn = cell.querySelector('[data-use-skin]');
+        const thumb = cell.querySelector('.skin-thumb');
+        if (thumb && btn) { thumb.style.cursor = 'pointer'; thumb.onclick = () => btn.click(); }
+      });
+    } catch (e) {
+      if (box.isConnected) box.innerHTML = `<div class="hint-text">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   async function loadLocalSkins() {
     const box = $('skin-local');
     if (!box) return;
@@ -4766,7 +5429,8 @@ function renderSkins(page) {
         s.dataUrl || '',
         s.name,
         `${formatSize(s.size)} · ${timeAgo(s.mtime)}`,
-        `<button class="btn sm" data-use="${escapeHtml(s.path)}">用作待上传</button>
+        `<button class="btn sm primary" data-use-skin="${escapeHtml(s.path)}">使用</button>
+         <button class="btn sm" data-use="${escapeHtml(s.path)}">用作待上传</button>
          <button class="btn sm danger" data-del="${escapeHtml(s.name)}">删除</button>`,
       )).join('');
       box.querySelectorAll('[data-use]').forEach((b) => {
@@ -4790,12 +5454,14 @@ function renderSkins(page) {
           }
         };
       });
+      bindUseSkin(box);
     } catch (e) {
       if (box.isConnected) box.innerHTML = `<div class="hint-text">${escapeHtml(e.message)}</div>`;
     }
   }
 
   loadLocalSkins();
+  loadHistory();
 }
 
 /* ========== 下载与日志 ========== */
@@ -5148,40 +5814,497 @@ function renderGradientTool(box) {
 
 /* ---------- 工具二：种子地图 ---------- */
 
+// 群系 id → 中文名（id 依据 cubiomes BiomeID）
+const BIOME_NAMES = {
+  0: '海洋', 1: '平原', 2: '沙漠', 3: '山地', 4: '森林', 5: '针叶林', 6: '沼泽', 7: '河流',
+  8: '下界荒地', 9: '末地', 10: '冻洋', 11: '冻河', 12: '雪原', 13: '雪山', 14: '蘑菇岛',
+  15: '蘑菇岛岸', 16: '海滩', 17: '沙漠丘陵', 18: '繁茂丘陵', 19: '针叶林丘陵', 20: '山地边缘',
+  21: '丛林', 22: '丛林丘陵', 23: '稀疏丛林', 24: '深海', 25: '石岸', 26: '积雪沙滩',
+  27: '白桦林', 28: '白桦林丘陵', 29: '黑森林', 30: '积雪针叶林', 31: '积雪针叶林丘陵',
+  32: '原始松木针叶林', 33: '原始云杉针叶林丘陵', 34: '繁茂山地', 35: '热带草原', 36: '热带高原',
+  37: '恶地', 38: '繁茂恶地高原', 39: '恶地高原', 40: '末地小型岛屿', 41: '末地中型岛屿',
+  42: '末地高地', 43: '末地荒岛', 44: '暖洋', 45: '温水海洋', 46: '冷水海洋', 47: '暖水深海',
+  48: '温水深海', 49: '冷水深海', 50: '冻洋深海', 127: '虚空',
+  129: '向日葵平原', 130: '沙漠湖泊', 131: '沙砾山地', 132: '繁花森林', 133: '针叶林山地',
+  134: '沼泽丘陵', 140: '冰刺之地', 149: '丛林变种', 151: '稀疏丛林丘陵', 155: '原始白桦林',
+  156: '原始白桦林丘陵', 157: '黑森林丘陵', 158: '积雪针叶林山地', 160: '原始云杉针叶林',
+  161: '原始云杉针叶林丘陵', 162: '沙砾山地+', 163: '破碎热带草原', 164: '破碎热带高原',
+  165: '风蚀恶地', 166: '繁茂恶地高原变种', 167: '恶地高原变种',
+  168: '竹林', 169: '竹林丘陵', 170: '灵魂沙峡谷', 171: '绯红森林', 172: '诡异森林',
+  173: '玄武岩三角洲', 174: '滴水石洞穴', 175: '繁茂洞穴', 177: '草甸', 178: '雪林',
+  179: '积雪山坡', 180: '尖峭山峰', 181: '冰封山峰', 182: '裸岩山峰', 183: '深暗之域',
+  184: '红树林沼泽', 185: '樱花林', 186: '苍白花园',
+};
+
+// 结构类型元信息（key 是 cubiomes StructureType 枚举整数）
+const STRUCT_META = {
+  1: { name: '沙漠神殿', short: '沙', color: '#e0b34c' },
+  2: { name: '丛林神殿', short: '丛', color: '#57ab42' },
+  3: { name: '女巫小屋', short: '巫', color: '#8a6a44' },
+  4: { name: '雪屋', short: '雪', color: '#cfe3f5' },
+  5: { name: '村庄', short: '村', color: '#d9a441' },
+  6: { name: '海底遗迹', short: '骸', color: '#3f7db5' },
+  7: { name: '沉船', short: '船', color: '#9a7444' },
+  8: { name: '海底纪念碑', short: '卫', color: '#2e8b96' },
+  9: { name: '林地府邸', short: '府', color: '#5b7a3f' },
+  10: { name: '掠夺者前哨站', short: '哨', color: '#8c9a5b' },
+  11: { name: '废弃传送门', short: '门', color: '#8d5aa8' },
+  12: { name: '废弃传送门', short: '门', color: '#8d5aa8' },
+  13: { name: '远古城市', short: '古', color: '#5b6ee1' },
+  18: { name: '下界要塞', short: '塞', color: '#c0563b' },
+  19: { name: '猪灵堡垒', short: '猪', color: '#d98c4a' },
+  20: { name: '末地城', short: '末', color: '#d4af37' },
+  23: { name: '古迹废墟', short: '迹', color: '#b08d57' },
+  24: { name: '试炼密室', short: '试', color: '#9aa7b5' },
+};
+
+const SEED_VERSIONS = [
+  '1.16.5', '1.17.1', '1.18.2', '1.19.2', '1.19.4',
+  '1.20', '1.20.6', '1.21.1', '1.21.3', '1.21',
+];
+const DIMS = [
+  { id: 0, name: '主世界' },
+  { id: -1, name: '下界' },
+  { id: 1, name: '末地' },
+];
+
 function renderSeedTool(box) {
   box.innerHTML = `
     <div class="panel" style="padding:22px">
       <div class="section-title">种子地图</div>
-      <div class="grid-2">
-        <div class="field"><label>世界种子</label><input class="input" id="sd-seed" placeholder="数字种子，例如 123456789"></div>
-        <div class="field"><label>MC 版本（查询外链用）</label><input class="input" id="sd-ver" value="1.20.1"></div>
-        <div class="field"><label>中心区块 X</label><input class="input" type="number" id="sd-cx" value="0"></div>
-        <div class="field"><label>中心区块 Z</label><input class="input" type="number" id="sd-cz" value="0"></div>
-        <div class="field"><label>显示范围（区块数）</label><input class="input" type="number" id="sd-range" value="64" min="16" max="256"></div>
+      <div class="row" style="flex-wrap:wrap;margin-bottom:12px">
+        <div class="field" style="min-width:220px;flex:1;margin:0 10px 8px 0">
+          <label>世界种子</label>
+          <input class="input" id="sd-seed" placeholder="数字种子，例如 12345，回车生成">
+        </div>
+        <div class="field" style="width:130px;margin:0 10px 8px 0">
+          <label>MC 版本</label>
+          <select class="input" id="sd-ver">
+            ${SEED_VERSIONS.map((v) => `<option${v === '1.20' ? ' selected' : ''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0 10px 8px 0">
+          <label>维度</label>
+          <div class="row" style="gap:0;margin:0" id="sd-dims">
+            ${DIMS.map((d, i) => `<button class="btn${i === 0 ? ' primary' : ''}" data-dim="${d.id}" style="border-radius:${i === 0 ? '10px 0 0 10px' : i === 2 ? '0 10px 10px 0' : '0'}">${d.name}</button>`).join('')}
+          </div>
+        </div>
       </div>
-      <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
-        <button class="btn primary" id="sd-gen">生成史莱姆区块图</button>
+      <div class="row" style="flex-wrap:wrap;margin-bottom:6px">
+        <button class="btn primary" id="sd-gen">生成地图</button>
         <button class="btn" id="sd-import">从存档导入种子</button>
-        <button class="btn" id="sd-cb">Chunk Base 查群系/结构</button>
+        <button class="btn" id="sd-spawn">回到出生点</button>
+        <button class="btn" id="sd-fort">定位最近要塞</button>
+        <button class="btn" id="sd-toggle">隐藏结构标记</button>
       </div>
-      <div class="hint-text">史莱姆区块按官方公式（seed + x²·4987142 + x·5947611 + z²·4392871 + z·389711 ^ 987234911 后 nextInt(10)==0）计算。群系分布、村庄 / 神殿 / 结构定位请用 Chunk Base（最准确）。</div>
-      <div id="sd-map" class="sd-map"></div>
+      <div id="sd-map" class="sd-map" style="position:relative">
+        <canvas id="sd-canvas" style="width:100%;height:540px;display:block;border-radius:16px;cursor:grab;background:#070b14;touch-action:none"></canvas>
+        <div id="sd-hud" style="position:absolute;left:12px;top:12px;background:rgba(10,15,26,.55);backdrop-filter:blur(8px);border-radius:10px;padding:6px 10px;font-size:12px;color:#cdd6e6;pointer-events:none">输入种子后生成地图</div>
+        <div id="sd-tip" style="position:absolute;left:0;top:0;display:none;background:rgba(10,15,26,.82);backdrop-filter:blur(8px);border-radius:8px;padding:5px 9px;font-size:11.5px;color:#e6ecf6;pointer-events:none;white-space:nowrap"></div>
+        <div class="row" style="position:absolute;right:12px;bottom:12px;margin:0;gap:6px">
+          <button class="btn" id="sd-out" style="padding:4px 11px">－</button>
+          <button class="btn" id="sd-in" style="padding:4px 11px">＋</button>
+        </div>
+      </div>
+      <div id="sd-legend" class="row" style="flex-wrap:wrap;margin-top:10px"></div>
+      <div class="hint-text" style="margin-top:8px">拖动平移 · 滚轮 / 按钮缩放 · 悬浮查看坐标与群系。全部结果在本地离线计算，基于 cubiomes（MIT License，© Cubitect），与游戏内生成一致。</div>
     </div>
   `;
 
-  const seedVal = () => $('sd-seed').value.trim() || '0';
+  const canvas = $('sd-canvas');
+  const ctx = canvas.getContext('2d');
+  const hud = $('sd-hud');
+  const tip = $('sd-tip');
 
-  $('sd-gen').onclick = async () => {
-    const range = Math.max(8, Math.min(256, parseInt($('sd-range').value, 10) || 64));
-    const half = Math.floor(range / 2);
-    const cx = (parseInt($('sd-cx').value, 10) || 0) - half;
-    const cz = (parseInt($('sd-cz').value, 10) || 0) - half;
-    try {
-      const hits = await api.labSlime(seedVal(), cx, cz, range, range);
-      drawSlimeMap($('sd-map'), cx, cz, range, hits, half);
-    } catch (e) { toast(e.message, true); }
+  const S = {
+    seed: '', ver: '1.20', dim: 0,
+    ccx: 0, ccz: 0, bpp: 16,
+    structs: [], strongholds: [], spawn: null,
+    showStructs: true,
   };
+  let reqSeq = 0;
+  let frame = null; // { img, tx, tz, scale, left, top, bpp }
+  const biomeCache = new Map();
 
+  const vp = () => ({ W: canvas.clientWidth, H: canvas.clientHeight });
+
+  function drawScene() {
+    if (!frame) return;
+    const { W, H } = vp();
+    paint(W, H, frame.bpp, frame.left, frame.top);
+  }
+
+  /**
+   * 把缓存瓦片画到指定视野（bpp/left/top 可以和取图时不同——
+   * 拖动 / 滚轮时用它即时反馈，不重新请求引擎）。
+   */
+  function paint(W, H, bpp, left, top) {
+    const dpr = window.devicePixelRatio || 1;
+    const bw = Math.round(W * dpr);
+    const bh = Math.round(H * dpr);
+    if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#070b14';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(frame.img,
+      (frame.tx - left) / bpp, (frame.tz - top) / bpp,
+      frame.img.width * frame.scale / bpp, frame.img.height * frame.scale / bpp);
+
+    // 区块网格（近景）与坐标轴
+    if (bpp <= 16) {
+      ctx.strokeStyle = 'rgba(255,255,255,.06)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const step = 16;
+      for (let bx = Math.ceil(left / step) * step; bx < left + W * bpp; bx += step) {
+        const x = (bx - left) / bpp;
+        ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      }
+      for (let bz = Math.ceil(top / step) * step; bz < top + H * bpp; bz += step) {
+        const y = (bz - top) / bpp;
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (0 >= left && 0 <= left + W * bpp) {
+      const x = -left / bpp;
+      ctx.moveTo(x, 0); ctx.lineTo(x, H);
+    }
+    if (0 >= top && 0 <= top + H * bpp) {
+      const y = -top / bpp;
+      ctx.moveTo(0, y); ctx.lineTo(W, y);
+    }
+    ctx.stroke();
+
+    if (S.showStructs) {
+      for (const p of S.structs) drawMarkerAt(p, STRUCT_META[p.type], left, top, bpp, W, H);
+      for (const p of S.strongholds) drawStrongholdAt(p, left, top, bpp, W, H);
+    }
+    if (S.spawn) drawSpawnAt(S.spawn, left, top, bpp, W, H);
+  }
+
+  /** 用当前 S 视野即时重绘（不取新瓦片） */
+  function instantView() {
+    if (!frame) return;
+    const { W, H } = vp();
+    const left = S.ccx - W * S.bpp / 2;
+    const top = S.ccz - H * S.bpp / 2;
+    paint(W, H, S.bpp, left, top);
+  }
+
+  function drawMarkerAt(p, meta, left, top, bpp, W, H) {
+    if (!meta) return;
+    const x = (p.x - left) / bpp;
+    const y = (p.z - top) / bpp;
+    if (x < -12 || y < -12 || x > W + 12 || y > H + 12) return;
+    const r = bpp <= 4 ? 7 : bpp <= 16 ? 5.5 : 4.5;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = meta.color;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    ctx.stroke();
+    ctx.fillStyle = '#0b101c';
+    ctx.font = '600 8px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(meta.short, x, y + 0.5);
+  }
+
+  function drawStrongholdAt(p, left, top, bpp, W, H) {
+    const x = (p.x - left) / bpp;
+    const y = (p.z - top) / bpp;
+    if (x < -14 || y < -14 || x > W + 14 || y > H + 14) return;
+    const r = 7;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = '#c084fc';
+    ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    ctx.lineWidth = 1;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.strokeRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
+    ctx.fillStyle = '#1b1030';
+    ctx.font = '700 9px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('S', x, y + 0.5);
+  }
+
+  function drawSpawnAt(p, left, top, bpp, W, H) {
+    const x = (p.x - left) / bpp;
+    const y = (p.z - top) / bpp;
+    if (x < -14 || y < -14 || x > W + 14 || y > H + 14) return;
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(0,0,0,.5)';
+    ctx.stroke();
+    ctx.fillStyle = '#2a1d04';
+    ctx.font = '700 9px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('出', x, y + 0.5);
+  }
+
+  async function refresh() {
+    if (!S.seed) return;
+    const seq = ++reqSeq;
+    const { W, H } = vp();
+    if (!W || !H) return;
+    const scale = S.bpp <= 4 ? 4 : S.bpp <= 16 ? 16 : S.bpp <= 64 ? 64 : 256;
+    const left = S.ccx - W * S.bpp / 2;
+    const top = S.ccz - H * S.bpp / 2;
+    const tx = Math.floor(left / scale) * scale;
+    const tz = Math.floor(top / scale) * scale;
+    const tw = Math.min(2048, Math.ceil((left + W * S.bpp - tx) / scale) + 1);
+    const th = Math.min(2048, Math.ceil((top + H * S.bpp - tz) / scale) + 1);
+    const prevFrame = frame;
+    hud.textContent = '渲染中…';
+    try {
+      const t = await api.labSeedTile({
+        version: S.ver, dim: S.dim, seed: S.seed, scale, x: tx, z: tz, w: tw, h: th,
+      });
+      if (seq !== reqSeq) return;
+      const off = document.createElement('canvas');
+      off.width = tw;
+      off.height = th;
+      const octx = off.getContext('2d');
+      const img = octx.createImageData(tw, th);
+      const d = img.data;
+      const px = t.pixels;
+      for (let i = 0, p = 0; i < d.length; i += 4, p += 3) {
+        d[i] = px[p]; d[i + 1] = px[p + 1]; d[i + 2] = px[p + 2]; d[i + 3] = 255;
+      }
+      octx.putImageData(img, 0, 0);
+      frame = { img: off, tx, tz, scale, left, top, bpp: S.bpp };
+      drawScene();
+      fillHud(Math.round(S.ccx), Math.round(S.ccz), true);
+    } catch (e) {
+      if (seq === reqSeq) hud.textContent = prevFrame ? '' : '地图生成失败';
+      toast(e.message, true);
+    }
+
+    // 当前视野内的结构
+    const bx0 = Math.floor(left);
+    const bz0 = Math.floor(top);
+    const bx1 = Math.ceil(left + W * S.bpp);
+    const bz1 = Math.ceil(top + H * S.bpp);
+    try {
+      const list = await api.labSeedStructs({
+        version: S.ver, dim: S.dim, seed: S.seed, bx0, bz0, bx1, bz1,
+      });
+      if (seq !== reqSeq) return;
+      S.structs = list;
+      drawScene();
+    } catch { /* 结构图层失败不影响底图 */ }
+  }
+
+  /**
+   * 交互结束后的延迟取图：拖动 / 滚轮过程中只用旧瓦片即时重绘，
+   * 停手 280ms 才向引擎请求当前视野的高清瓦片。
+   */
+  let settleTimer = null;
+  function settleRefresh() {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { refresh(); }, 280);
+  }
+
+  function curView() {
+    const { W, H } = vp();
+    return { W, H, left: S.ccx - W * S.bpp / 2, top: S.ccz - H * S.bpp / 2, bpp: S.bpp };
+  }
+
+  async function loadWorldMarkers() {
+    S.strongholds = [];
+    S.spawn = null;
+    if (S.dim !== 0) return;
+    try {
+      const [sh, sp] = await Promise.all([
+        api.labSeedStrongholds({ version: S.ver, seed: S.seed }),
+        api.labSeedSpawn({ version: S.ver, seed: S.seed }),
+      ]);
+      S.strongholds = sh;
+      S.spawn = sp;
+    } catch { /* 标记缺失不影响地图 */ }
+  }
+
+  async function applySeed() {
+    const seed = $('sd-seed').value.trim();
+    if (!seed) { toast('请填写世界种子', true); return; }
+    S.seed = seed;
+    S.ver = $('sd-ver').value;
+    S.structs = [];
+    biomeCache.clear();
+    frame = null;
+    hud.textContent = '定位出生点…';
+    await loadWorldMarkers();
+    if (S.spawn) { S.ccx = S.spawn.x; S.ccz = S.spawn.z; }
+    else { S.ccx = 0; S.ccz = 0; }
+    S.bpp = 16;
+    renderLegend();
+    refresh();
+  }
+
+  function renderLegend() {
+    const ids = S.dim === 0
+      ? [5, 1, 2, 3, 4, 8, 6, 7, 9, 10, 11, 13, 23, 24]
+      : S.dim === -1
+        ? [18, 19, 11]
+        : [20];
+    $('sd-legend').innerHTML = ids.map((id) => {
+      const m = STRUCT_META[id];
+      return `<span style="display:inline-flex;align-items:center;font-size:11.5px;color:var(--text-dim);margin:0 12px 4px 0">
+        <span style="width:9px;height:9px;border-radius:50%;background:${m.color};margin-right:6px"></span>${m.name}
+      </span>`;
+    }).join('') + `<span style="display:inline-flex;align-items:center;font-size:11.5px;color:var(--text-dim);margin:0 12px 4px 0">
+        <span style="width:9px;height:9px;border-radius:2px;background:#c084fc;margin-right:6px;transform:rotate(45deg)"></span>要塞
+      </span><span style="display:inline-flex;align-items:center;font-size:11.5px;color:var(--text-dim);margin:0 12px 4px 0">
+        <span style="width:9px;height:9px;border-radius:50%;background:#fbbf24;margin-right:6px"></span>出生点
+      </span>`;
+  }
+
+  /* ---- 交互：拖动 ---- */
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    if (dragging) {
+      S.ccx -= (e.clientX - lastX) * S.bpp;
+      S.ccz -= (e.clientY - lastY) * S.bpp;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      instantView();
+      return;
+    }
+    if (!frame) return;
+    const v = curView();
+    const bx = Math.floor(v.left + mx * v.bpp);
+    const bz = Math.floor(v.top + my * v.bpp);
+
+    // 附近的结构点 → 浮层提示
+    let near = null;
+    if (S.showStructs) {
+      let bestD = 14;
+      const check = (p, name) => {
+        const sx = (p.x - v.left) / v.bpp;
+        const sy = (p.z - v.top) / v.bpp;
+        const d = Math.hypot(sx - mx, sy - my);
+        if (d < bestD) { bestD = d; near = { name, x: p.x, z: p.z }; }
+      };
+      for (const p of S.structs) {
+        const m = STRUCT_META[p.type];
+        if (m) check(p, m.name);
+      }
+      for (const p of S.strongholds) check(p, '要塞');
+      if (S.spawn) check(S.spawn, '出生点');
+    }
+    if (near) {
+      tip.style.display = 'block';
+      tip.textContent = `${near.name}　X ${near.x}　Z ${near.z}`;
+      tip.style.left = `${Math.min(mx + 14, rect.width - 150)}px`;
+      tip.style.top = `${my + 16}px`;
+    } else {
+      tip.style.display = 'none';
+    }
+
+    fillHud(bx, bz, false);
+  });
+
+  /** 更新坐标/群系 HUD；缺群系时异步查一次并缓存 */
+  let lastHudKey = '';
+  function hudLine(bx, bz, id) {
+    const name = id === undefined ? '群系读取中…' : (BIOME_NAMES[id] || ('群系#' + id));
+    return `X ${bx}　Z ${bz}　·　${name}　·　每像素 ${S.bpp} 格`;
+  }
+  async function queryBiome(bx, bz) {
+    const key = `${bx},${bz}`;
+    try {
+      const id = await api.labSeedBiome({
+        version: S.ver, dim: S.dim, seed: S.seed, x: bx, z: bz,
+      });
+      biomeCache.set(key, id);
+      if (lastHudKey === key) hud.textContent = hudLine(bx, bz, id);
+    } catch { /* ignore */ }
+  }
+  function fillHud(bx, bz, instant) {
+    const key = `${bx},${bz}`;
+    lastHudKey = key;
+    const cachedId = biomeCache.get(key);
+    hud.textContent = hudLine(bx, bz, cachedId);
+    if (cachedId !== undefined) return;
+    if (instant) { queryBiome(bx, bz); return; }
+    clearTimeout(canvas._bioTimer);
+    canvas._bioTimer = setTimeout(() => {
+      if (!biomeCache.has(key)) queryBiome(bx, bz);
+    }, 120);
+  }
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    canvas.style.cursor = 'grab';
+    try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    settleRefresh();
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  /* ---- 交互：滚轮缩放（以鼠标位置为锚点） ---- */
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (!frame) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const v = curView();
+    const blockX = v.left + mx * v.bpp;
+    const blockZ = v.top + my * v.bpp;
+    const nb = Math.max(2, Math.min(512, v.bpp * Math.exp(e.deltaY * 0.0014)));
+    S.bpp = nb;
+    S.ccx = blockX - mx * nb + rect.width * nb / 2;
+    S.ccz = blockZ - my * nb + rect.height * nb / 2;
+    instantView();
+    settleRefresh();
+  }, { passive: false });
+
+  function zoomBy(f) {
+    S.bpp = Math.max(2, Math.min(512, S.bpp * f));
+    instantView();
+    settleRefresh();
+  }
+
+  /* ---- 按钮 ---- */
+  $('sd-gen').onclick = applySeed;
+  $('sd-seed').addEventListener('keydown', (e) => { if (e.key === 'Enter') applySeed(); });
+  $('sd-ver').onchange = async () => {
+    if (!S.seed) return;
+    S.ver = $('sd-ver').value;
+    S.structs = [];
+    frame = null;
+    biomeCache.clear();
+    hud.textContent = '切换版本…';
+    await loadWorldMarkers();
+    refresh();
+  };
   $('sd-import').onclick = async () => {
     const dir = await api.pickDir();
     if (!dir) return;
@@ -5189,49 +6312,62 @@ function renderSeedTool(box) {
       const seed = await api.labSeedFromSave(dir);
       $('sd-seed').value = seed;
       toast('已导入种子：' + seed);
+      applySeed();
     } catch (e) { toast('读取失败：' + e.message, true); }
   };
-
-  $('sd-cb').onclick = async () => {
-    const url = await api.labChunkbase(seedVal(), $('sd-ver').value.trim() || '1.20.1');
-    api.openUrl(url);
+  $('sd-spawn').onclick = () => {
+    if (!S.seed) { toast('请先生成地图', true); return; }
+    if (S.spawn) { S.ccx = S.spawn.x; S.ccz = S.spawn.z; refresh(); }
+    else toast('出生点信息尚未就绪');
   };
-
-  $('sd-gen').click();
-}
-
-function drawSlimeMap(host, cx0, cz0, range, hits, half) {
-  const cell = Math.max(3, Math.min(12, Math.floor(560 / range)));
-  const size = range * cell;
-  const set = new Set(hits.map(([x, z]) => `${x},${z}`));
-  const dpr = window.devicePixelRatio || 1;
-  const canvas = document.createElement('canvas');
-  canvas.width = size * dpr;
-  canvas.height = size * dpr;
-  canvas.style.width = `${size}px`;
-  canvas.style.height = `${size}px`;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  ctx.fillStyle = '#0e1420';
-  ctx.fillRect(0, 0, size, size);
-  for (let dz = 0; dz < range; dz++) {
-    for (let dx = 0; dx < range; dx++) {
-      const cx = cx0 + dx;
-      const cz = cz0 + dz;
-      ctx.fillStyle = set.has(`${cx},${cz}`) ? '#22c55e' : '#182131';
-      ctx.fillRect(dx * cell, dz * cell, cell - 1, cell - 1);
+  $('sd-fort').onclick = () => {
+    if (!S.strongholds.length) { toast('还没有要塞信息（仅主世界）', true); return; }
+    let best = S.strongholds[0];
+    let bd = Infinity;
+    for (const p of S.strongholds) {
+      const d = (p.x - S.ccx) ** 2 + (p.z - S.ccz) ** 2;
+      if (d < bd) { bd = d; best = p; }
     }
-  }
-  ctx.strokeStyle = 'rgba(255,255,255,.18)';
-  const center = half * cell;
-  ctx.strokeRect(center, center, cell, cell);
-  host.innerHTML = '';
-  const wrap = ce('div', 'sd-wrap');
-  wrap.appendChild(canvas);
-  const info = ce('div', 'hint-text');
-  info.textContent = `范围 ${range}×${range} 区块，命中史莱姆区块 ${hits.length} 个（绿点）；白框为中心区块。`;
-  host.appendChild(wrap);
-  host.appendChild(info);
+    S.ccx = best.x;
+    S.ccz = best.z;
+    S.bpp = 8;
+    refresh();
+  };
+  $('sd-toggle').onclick = () => {
+    S.showStructs = !S.showStructs;
+    $('sd-toggle').textContent = S.showStructs ? '隐藏结构标记' : '显示结构标记';
+    drawScene();
+  };
+  $('sd-in').onclick = () => zoomBy(0.7);
+  $('sd-out').onclick = () => zoomBy(1.4);
+
+  document.querySelectorAll('#sd-dims button').forEach((b) => {
+    b.onclick = async () => {
+      const dim = parseInt(b.dataset.dim, 10);
+      if (dim === S.dim) return;
+      S.dim = dim;
+      S.structs = [];
+      frame = null;
+      biomeCache.clear();
+      document.querySelectorAll('#sd-dims button').forEach((x) => x.classList.remove('primary'));
+      b.classList.add('primary');
+      renderLegend();
+      if (S.seed) {
+        hud.textContent = '切换维度…';
+        await loadWorldMarkers();
+        refresh();
+      }
+    };
+  });
+
+  // 容器尺寸变化（含初次布局完成）：先用旧瓦片即时适配，停稳后再取新图
+  const ro = new ResizeObserver(() => {
+    if (!S.seed) return;
+    instantView();
+    settleRefresh();
+  });
+  ro.observe(canvas);
+  renderLegend();
 }
 
 /* ---------- 工具三：投影工坊 ---------- */
@@ -5702,6 +6838,60 @@ function renderTranslateTool(box) {
   };
 }
 
+/* ========== 启动器自更新 ========== */
+
+// 检查到的新版清单；null = 无新版 / 还没查过。顶栏红点与首页徽章都读它。
+let pendingUpdate = null;
+
+/** 有新版时在顶栏头像挂小红点、首页挂个徽章（两处都可能不在 DOM 里，各自判空） */
+function paintUpdateDot() {
+  const on = !!pendingUpdate;
+  const av = $('top-avatar');
+  if (av) {
+    av.classList.toggle('has-update', on);
+    av.title = on ? `发现新版本 v${pendingUpdate.latest}` : '';
+  }
+  const badge = $('hero-badge-update');
+  if (badge) badge.hidden = !on;
+}
+
+/** 跳到设置页的更新区块 */
+function openUpdateSettings() {
+  renderPage('settings');
+  const el = $('up-block');
+  if (el) el.scrollIntoView({ block: 'center' });
+}
+
+/**
+ * 检查更新。silent=true 供启动时后台跑：没查到新版、连不上、地址没填都一律不打扰玩家，
+ * 只有确实有新版才点亮红点与徽章。
+ */
+async function checkUpdate(silent = false) {
+  const up = (state.config && state.config.update) || {};
+  if (!up.url) {
+    if (!silent) toast('还没填更新地址', true);
+    return null;
+  }
+  try {
+    const res = await api.updaterCheck(up.url);
+    pendingUpdate = res.hasUpdate ? res : null;
+    paintUpdateDot();
+    if (!silent) toast(res.hasUpdate ? `发现新版本 v${res.latest}` : '已是最新版');
+    return res;
+  } catch (e) {
+    if (!silent) toast(`检查更新失败：${e.message}`, true);
+    return null;
+  }
+}
+
+/** 6 小时内查过就跳过，免得每开一次启动器都去敲一遍服务器 */
+async function autoCheckUpdate() {
+  const up = (state.config && state.config.update) || {};
+  if (up.autoCheck === false || !up.url) return;
+  if (Date.now() - Number(up.lastCheckAt || 0) < 6 * 3600 * 1000) return;
+  await checkUpdate(true);
+}
+
 /* ========== 设置 ========== */
 
 function renderSettings(page) {
@@ -5858,6 +7048,18 @@ function renderSettings(page) {
           <span class="mem-legend-free" id="mem-free-hint">可用 —</span>
         </div>
       </div>
+      <div style="margin-bottom:16px">
+        <div class="hint-text" style="margin-bottom:8px">清理强度（三级以上会请求管理员权限，能把系统待机内存也清出来）</div>
+        <div class="row" id="mem-levels" style="gap:8px;flex-wrap:wrap;margin:0">
+          <button class="btn" data-level="1">一级 · 轻度</button>
+          <button class="btn" data-level="2">二级 · 标准</button>
+          <button class="btn" data-level="3">三级 · 增强</button>
+          <button class="btn" data-level="4">四级 · 深度</button>
+          <button class="btn" data-level="5">五级 · 强力</button>
+          <button class="btn" data-level="6">六级 · 极限</button>
+        </div>
+        <div class="hint-text" id="mem-level-desc" style="margin-top:8px;line-height:1.7"></div>
+      </div>
       <div class="mem-actions">
         <button class="btn" id="btn-auto-mem">⚙ 自动分配内存</button>
         <button class="btn" id="btn-clean-mem">🧹 一键清理内存</button>
@@ -5966,6 +7168,42 @@ function renderSettings(page) {
       </div>
     </div>
 
+    <div class="glass" style="padding:22px;margin-top:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:6px">实验功能</div>
+      <div class="page-sub" style="margin-bottom:14px">可能还在打磨的玩法，默认关闭，随时可以撤回</div>
+      <div class="field">
+        <label class="ui-check">
+          <input type="checkbox" id="set-island" ${c.islandEnabled ? 'checked' : ''}>
+          <span>通知浮岛 · 顶部居中弹出通知</span>
+        </label>
+        <div class="hint-text" style="margin-top:6px">打开后，下载完成、游戏启动 / 退出、更新等消息会从屏幕顶部正中以液态玻璃胶囊弹出、展开、再收起，点击可提前关掉。名字与造型都是我们自己的，不含任何第三方商标素材。</div>
+        <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="btn-island-test" type="button">试弹一条</button>
+          <span class="hint-text" id="island-test-hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="glass" id="up-block" style="padding:22px;margin-top:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:6px">更新</div>
+      <div class="page-sub" style="margin-bottom:14px">填一个能返回更新清单 JSON 的地址，启动器会比对版本并下载新版安装包</div>
+      <div class="field">
+        <label>更新地址</label>
+        <input class="input" id="up-url" placeholder="https://example.com/latest.json">
+        <div class="hint-text">JSON 需含 version 与 installer，可选 notes / publishedAt / sha256 / page。留空则不检查。当前版本 <b id="up-cur">—</b>。</div>
+      </div>
+      <label class="ui-check"><input type="checkbox" id="up-auto"> 启动时自动检查更新（6 小时内只查一次）</label>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">
+        <button class="btn primary" id="up-check" type="button">检查更新</button>
+        <button class="btn" id="up-save" type="button">保存更新设置</button>
+        <button class="btn" id="up-action" type="button" hidden>立即更新</button>
+        <button class="btn" id="up-page" type="button" hidden>打开下载页</button>
+        <span class="hint-text" id="up-status"></span>
+      </div>
+      <div class="progress-track" id="up-progress" hidden><div class="progress-fill" id="up-fill"></div></div>
+      <div class="hint-text" id="up-notes" hidden style="margin-top:10px"></div>
+    </div>
+
     <div style="margin-top:18px;display:flex;justify-content:flex-end">
       <button class="btn primary" id="btn-save-settings">保存设置</button>
     </div>
@@ -5989,7 +7227,45 @@ function renderSettings(page) {
 
   $('btn-gamedir').onclick = async () => {
     const dir = await api.pickDir();
-    if (dir) { $('set-gamedir').value = dir; applyAndSave({ gameDir: dir }); }
+    if (!dir) return;
+    const cur = String(state.config.gameDir || '');
+    const normDir = (s) => String(s || '').replace(/[\\/]+$/, '').toLowerCase();
+    if (normDir(dir) === normDir(cur)) return;
+
+    const choice = await askChoice('把游戏目录改到这里？', [
+      {
+        value: 'move',
+        label: '一起移动已有文件（推荐）',
+        desc: `把当前目录里的版本、模组、存档、资源等全部移动到新目录，旧位置清空，不用重新下载。文件多时需要一些时间。`,
+      },
+      {
+        value: 'keep',
+        label: '只改位置，不移动文件',
+        desc: '今后游戏文件下载到新目录；旧目录里的文件原样保留（可之后手动删除）。',
+      },
+    ]);
+    if (!choice) return;
+
+    const btn = $('btn-gamedir');
+    const inp = $('set-gamedir');
+    btn.disabled = true;
+    btn.textContent = choice === 'move' ? '正在移动文件…' : '切换中…';
+    try {
+      const r = await api.gameDirChange(dir, choice === 'move');
+      await refreshConfig();
+      inp.value = r.newDir;
+      if (choice === 'move') {
+        const n = Object.keys(r.changed || {}).length;
+        toast(`游戏文件已移动到新目录${n ? `，${n} 个实例路径已同步` : ''}`);
+      } else {
+        toast('游戏目录已更改，今后文件将下载到新位置');
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '浏览';
+    }
   };
 
   // Java 列表 + 版本匹配 + 自动下载
@@ -6229,6 +7505,98 @@ function renderSettings(page) {
   $('btn-migrate-scan').onclick = () => scanOtherLaunchers($('btn-migrate-scan'));
   $('btn-migrate-pick').onclick = () => scanPickedDir($('btn-migrate-pick'));
 
+  // ========== 实验功能：通知浮岛 ==========
+  $('set-island').onchange = async (e) => {
+    await api.configSet('islandEnabled', e.target.checked);
+    state.config.islandEnabled = e.target.checked;
+    $('island-test-hint').textContent = e.target.checked ? '已开启' : '已关闭';
+  };
+  $('btn-island-test').onclick = () => {
+    if (!state.config.islandEnabled) {
+      $('set-island').checked = true;
+      api.configSet('islandEnabled', true);
+      state.config.islandEnabled = true;
+    }
+    islandNotify({ ico: '🎉', title: '通知浮岛已就绪', desc: '以后下载完成的消息会从这里弹出来' });
+  };
+
+  // ========== 更新 ==========
+  const up = state.config.update || {};
+  $('up-url').value = up.url || '';
+  $('up-auto').checked = up.autoCheck !== false;
+  $('up-cur').textContent = `v${(state.updateInfo || {}).version || '1.0.0'}`;
+
+  /** 摆好按钮：安装版给「立即更新」，清单里带了下载页就给「打开下载页」；免安装版只留后者 */
+  const refreshUpActions = (status) => {
+    const m = pendingUpdate;
+    const portable = !!(state.updateInfo || {}).portable;
+    $('up-action').hidden = !(m && m.installer && !portable);
+    $('up-page').hidden = !(m && m.page);
+    $('up-notes').textContent = (m && m.notes) || '';
+    $('up-notes').hidden = !(m && m.notes);
+    if (status !== undefined) $('up-status').textContent = status;
+  };
+  refreshUpActions(pendingUpdate
+    ? `发现新版本 v${pendingUpdate.latest}（当前 v${pendingUpdate.current}）`
+      + ((state.updateInfo || {}).portable ? ' · 免安装版请到下载页取新版' : '')
+    : '');
+
+  $('up-save').onclick = async () => {
+    const url = $('up-url').value.trim();
+    await api.configUpdate({ update: { url, autoCheck: $('up-auto').checked } });
+    state.config = await api.configGetAll();
+    toast(url ? '更新设置已保存' : '已清空更新地址，不再检查更新');
+  };
+
+  $('up-check').onclick = async () => {
+    const url = $('up-url').value.trim();
+    if (!url) return toast('请先填写更新地址', true);
+    const btn = $('up-check');
+    btn.disabled = true;
+    btn.textContent = '检查中…';
+    try {
+      const res = await api.updaterCheck(url);
+      pendingUpdate = res.hasUpdate ? res : null;
+      paintUpdateDot();
+      $('up-progress').hidden = true;
+      $('up-fill').style.width = '0';
+      refreshUpActions(res.hasUpdate
+        ? `发现新版本 v${res.latest}（当前 v${res.current}）${res.portable ? ' · 免安装版请到下载页取新版' : ''}`
+        : `已是最新版 v${res.current}`);
+      toast(res.hasUpdate ? `发现新版本 v${res.latest}` : '已是最新版');
+    } catch (e) {
+      toast(`检查更新失败：${e.message}`, true);
+      $('up-status').textContent = `检查失败：${e.message}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '检查更新';
+    }
+  };
+
+  $('up-action').onclick = async () => {
+    const m = pendingUpdate;
+    if (!m) return;
+    const btn = $('up-action');
+    btn.disabled = true;
+    $('up-progress').hidden = false;
+    $('up-fill').style.width = '0';
+    $('up-status').textContent = '准备下载…';
+    try {
+      const r = await api.updaterDownload(m);
+      $('up-status').textContent = '安装包已就绪，正在启动安装程序…';
+      await api.updaterInstall(r.path);
+      $('up-status').textContent = '已启动安装程序，启动器即将退出';
+    } catch (e) {
+      toast(`更新失败：${e.message}`, true);
+      $('up-status').textContent = `更新失败：${e.message}`;
+      btn.disabled = false;
+    }
+  };
+
+  $('up-page').onclick = () => {
+    if (pendingUpdate && pendingUpdate.page) api.updaterOpen(pendingUpdate.page);
+  };
+
   $('btn-save-settings').onclick = () => {
     const maxMem = parseInt($('set-maxmem').value) || 4096;
     const minMem = parseInt($('set-minmem').value) || 512;
@@ -6329,22 +7697,62 @@ function renderSettings(page) {
     }
   };
 
-  // 一键清理内存
+  // ---- 清理强度等级 ----
+  const LEVEL_NAME = ['', '轻度', '标准', '增强', '深度', '强力', '极限'];
+  const LEVEL_DESC = {
+    1: '一级 · 轻度：只收回启动器自身进程的工作集，瞬间完成，不需要授权。',
+    2: '二级 · 标准：连带收回全系统进程的工作集（普通权限能收的部分）。',
+    3: '三级 · 增强：请求管理员权限，清空低优先级待机内存（系统缓存的一部分）。',
+    4: '四级 · 深度：管理员权限清空全部待机内存——待机内存常占 1~4GB，开游戏前清一次最划算。',
+    5: '五级 · 强力：再把已修改页面写回磁盘、收缩系统文件缓存，释放更彻底。',
+    6: '六级 · 极限：整套操作连续执行两轮，把内存压到最低。',
+  };
+  let cleanLevel = 3;
+  const selectLevel = (lv) => {
+    cleanLevel = lv;
+    document.querySelectorAll('#mem-levels button').forEach((b) => {
+      b.classList.toggle('primary', parseInt(b.dataset.level, 10) === lv);
+    });
+    const descEl = $('mem-level-desc');
+    if (descEl) {
+      descEl.textContent = LEVEL_DESC[lv]
+        + (lv >= 3 ? '　点击清理后会弹出系统 UAC 授权框，请点「是」。' : '');
+    }
+  };
+  document.querySelectorAll('#mem-levels button').forEach((b) => {
+    b.onclick = () => selectLevel(parseInt(b.dataset.level, 10));
+  });
+  selectLevel(3);
+
+  // 一键清理内存（按选中的强度等级执行）
   $('btn-clean-mem').onclick = async () => {
     const btn = $('btn-clean-mem');
     const gauge = $('mem-gauge');
     btn.disabled = true;
-    btn.textContent = '清理中…';
+    btn.textContent = cleanLevel >= 3 ? '等待管理员授权…' : '清理中…';
     if (gauge) gauge.classList.add('cleaning');
     try {
-      const r = await api.memoryClean();
+      const r = await api.memoryClean(cleanLevel);
       const tip = $('mem-recommend-tip');
       tip.style.display = 'block';
-      tip.textContent = r.freedMB > 0
-        ? `本次释放 ${fmtMem(r.freedMB)}：启动器占用 ${fmtMem(r.appBeforeMB)} → ${fmtMem(r.appAfterMB)}。`
-          + `${r.elevated ? `另外收回系统进程 ${r.sysTrimmed} 个。` : '以管理员身份运行可连带清理系统其他进程的工作集。'}`
-        : '启动器内存已经处于低位，本次没有可释放的常驻页。以管理员身份运行可清理系统其他进程。';
-      toast(r.freedMB > 0 ? `已释放 ${fmtMem(r.freedMB)}` : '内存已是最优状态');
+
+      if (r.cancelled) {
+        tip.textContent = `已取消管理员授权，${LEVEL_NAME[r.level]}清理未执行。重新点击清理并在 UAC 框里选「是」即可。`;
+        toast('已取消管理员授权', true);
+      } else {
+        const sysFreed = r.systemFreedMB;
+        const standbyOk = r.lowStandbyStatus === 0 || r.standbyStatus === 0;
+        const parts = [`【${'一二三四五六'[r.level - 1]}级 · ${LEVEL_NAME[r.level]}】本次释放系统内存 ${fmtMem(sysFreed)}`];
+        parts.push(`启动器占用 ${fmtMem(r.appBeforeMB)} → ${fmtMem(r.appAfterMB)}`);
+        if (r.sysTrimmed > 0) parts.push(`修剪进程 ${r.sysTrimmed} 个`);
+        if (r.level >= 3 && !standbyOk) parts.push('待机内存未能清空（可能被安全软件拦截）');
+        let text = parts.join('，') + '。';
+        if (r.level >= 3) {
+          text += '清理会暂时清掉系统文件缓存，接下来短时间内打开程序、读存档可能稍慢，属正常现象。';
+        }
+        tip.textContent = text;
+        toast(sysFreed > 0 ? `已释放 ${fmtMem(sysFreed)}` : '内存已是低位');
+      }
       await refreshMemInfo();
     } catch (e) {
       toast(e.message, true);
@@ -6508,13 +7916,18 @@ function bindGlobalEvents() {
       }
     }
     hideHomeProgress();
-    toast('游戏已启动');
+    toast('游戏已启动', false, { ico: '🎮', desc: '祝你玩得开心', hold: 2800 });
   });
-  api.onGameExit(() => {
+  api.onGameExit((code) => {
     state.busy = false;
     if (state.currentPage === 'home') {
       const btn = $('home-play');
       if (btn) { btn.disabled = false; btn.innerHTML = '<span class="play-ico"></span>立即启动'; }
+    }
+    if (code && code !== 0) {
+      toast(`游戏异常退出（代码 ${code}）`, true, { ico: '🏁', hold: 4200 });
+    } else {
+      islandNotify({ ico: '🏁', title: '游戏已退出', desc: '欢迎下次再来', hold: 2600 });
     }
   });
   api.onLog((entry) => {
@@ -6632,7 +8045,11 @@ async function openImportDialog(paths) {
 
   const instanceMap = state.config.instances || {};
   const entries = Object.entries(instanceMap);
-  const curId = state.selectedInstance in instanceMap ? state.selectedInstance : (entries[0] ? entries[0][0] : 'default');
+  if (!entries.length) {
+    toast('还没有实例，请先下载游戏版本建好实例再导入', true);
+    return;
+  }
+  const curId = state.selectedInstance in instanceMap ? state.selectedInstance : entries[0][0];
   const needWorld = items.some((it) => it.kind === 'datapack');
 
   const mask = ce('div', 'modal-mask');
@@ -7008,13 +8425,85 @@ async function importViaDialog() {
 /* ========== Toast / Loading ========== */
 
 let toastTimer = null;
-function toast(message, isError = false) {
+function toast(message, isError = false, island = null) {
   const el = $('toast');
   el.textContent = message;
   el.className = isError ? 'toast error' : 'toast';
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+  // 第三参数：可覆盖浮岛的图标/描述，或传 false 表示这条只走 toast、不弹浮岛
+  if (island !== false) {
+    islandNotify(Object.assign(
+      { title: message, err: isError, ico: isError ? '⚠️' : '🔔' },
+      island,
+    ));
+  }
+}
+
+/* ---------- 通知浮岛（实验功能） ---------- */
+
+const islandState = { queue: [], busy: false, waitRes: null };
+
+/** 可被「点击胶囊」提前结束的等待 */
+function islandWait(ms) {
+  return new Promise((res) => {
+    islandState.waitRes = res;
+    setTimeout(res, ms);
+  });
+}
+function islandSkipWait() {
+  if (islandState.waitRes) islandState.waitRes();
+}
+
+async function islandDrain() {
+  if (islandState.busy) return;
+  if (!islandState.queue.length) return;
+  islandState.busy = true;
+
+  const host = $('notify-island');
+  const pill = $('island-pill');
+  pill.onclick = () => {
+    islandState.queue.length = 0;   // 点一下：跳过当前、清掉排队
+    islandSkipWait();
+  };
+
+  while (islandState.queue.length) {
+    const item = islandState.queue.shift();
+    $('island-ico').textContent = item.ico || '🔔';
+    $('island-title').textContent = item.title || '';
+    const desc = $('island-desc');
+    desc.textContent = item.desc || '';
+    desc.style.display = item.desc ? '' : 'none';
+    pill.classList.toggle('err', !!item.err);
+
+    host.hidden = false;
+    void pill.offsetWidth;                       // 确保起始态先绘制，入场动画才跑得起来
+    pill.classList.add('pop');                  // ① 小圆胶囊冒出来
+    await islandWait(220);
+    pill.classList.add('expanded');             // ② 横向展开露文字
+    await islandWait(item.hold || 3400);
+
+    pill.classList.remove('expanded');          // 收起
+    await islandWait(300);
+    pill.classList.remove('pop');
+    await islandWait(300);
+  }
+
+  host.hidden = true;
+  islandState.busy = false;
+}
+
+/**
+ * 弹一条通知浮岛。开关关着就静默忽略（调用方无需判断）。
+ * 连续相同标题的消息会被丢弃，避免一条消息刷一串胶囊。
+ */
+function islandNotify(item) {
+  if (!state.config || !state.config.islandEnabled || !item || !item.title) return;
+  const last = islandState.queue[islandState.queue.length - 1];
+  if (last && last.title === item.title) return;
+  islandState.queue.push(item);
+  islandDrain();
 }
 
 function showLoading(text = '处理中…') {

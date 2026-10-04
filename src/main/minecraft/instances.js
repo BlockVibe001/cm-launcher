@@ -33,11 +33,13 @@ function saveInstance(id, data) {
 
 function deleteInstance(id) {
   const all = listInstances();
-  if (id === 'default') throw new Error('默认实例不可删除');
+  // 所有实例都允许删除（包括最初的默认实例），启动器不保留任何"钉子户"。
   delete all[id];
   config.set('instances', all);
   if (config.get('selectedInstance') === id) {
-    config.set('selectedInstance', 'default');
+    // 选中的实例没了：自动落到剩余的第一个；一个都不剩则置空，由界面引导下载。
+    const rest = Object.keys(all);
+    config.set('selectedInstance', rest[0] || '');
   }
 }
 

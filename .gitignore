@@ -4,3 +4,17 @@ dist_release/
 release/
 *.log
 shot-*.png
+
+# Tauri / Rust 构建产物
+tauri/src-tauri/target/
+tauri/dev.log
+tauri/gate-*.png
+tauri/gate-*.json
+tauri/smoke-*.png
+
+# IDE 内部文档
+.trae/
+
+# 系统
+Thumbs.db
+Desktop.ini

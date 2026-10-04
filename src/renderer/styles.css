@@ -233,6 +233,20 @@ input, button, select, textarea {
   image-rendering: pixelated;
 }
 
+/* 查到新版时头像右上角挂个小红点（点它去设置页更新区） */
+.user-avatar { position: relative; }
+.user-avatar.has-update::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid var(--bg-1);
+}
+
 .user-name { font-size: 12.5px; font-weight: 700; line-height: 1.2; }
 .user-type { font-size: 10px; color: var(--text-faint); }
 
@@ -3484,6 +3498,106 @@ body[data-wall="custom"] .bg-layer .bg-grid { display: none; }
    仅把应用底色 / 面板底色收束到接近纯黑，保留液态玻璃的通透与模糊，
    不动任何文字颜色。范围克制，避免破坏现有观感。
    ============================================================ */
+
+/* ============================================================
+   通知浮岛（实验功能 · 设置里开关）
+   顶部正中的液态玻璃胶囊：先以小圆胶囊冒出来，再横向展开露出文字；
+   自己起的名字和造型，不使用任何第三方商标素材。
+   ============================================================ */
+.notify-island {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9000;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.island-pill {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  height: 48px;
+  max-width: 56px;
+  overflow: hidden;
+  border-radius: 24px;
+  cursor: pointer;
+  white-space: nowrap;
+  background: rgba(15, 17, 24, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 12px 38px rgba(0, 0, 0, 0.5);
+  transform: translateY(-18px) scale(0.66);
+  opacity: 0;
+  transition:
+    transform 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.28),
+    opacity 0.28s ease,
+    max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* ① 小圆胶囊先弹出来 */
+.island-pill.pop {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+/* ② 再横向展开露出文字 */
+.island-pill.expanded {
+  max-width: 480px;
+}
+
+.island-ico {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+}
+
+.island-text {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: 20px;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity 0.22s ease 0.1s, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1) 0.1s;
+}
+.island-pill.expanded .island-text {
+  opacity: 1;
+  transform: translateX(0);
+}
+.island-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.island-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 出错 / 需要注意：描边与辉光收成警示色 */
+.island-pill.err {
+  border-color: rgba(248, 113, 113, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 12px 38px rgba(0, 0, 0, 0.5),
+    0 0 22px rgba(248, 113, 113, 0.22);
+}
+.island-pill.err .island-ico { filter: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .island-pill { transition: opacity 0.2s ease, max-width 0.2s ease; }
+  .island-pill.pop { transform: none; }
+  .island-text { transition: opacity 0.2s ease; transform: none; }
+}
 
 /* ---------- 1. 令牌：底色压到纯黑 ---------- */
 body[data-mode="oled"] {

@@ -1,0 +1,61 @@
+种子地图（内置组件）
+================================
+
+本目录下的 seedmap.exe 随启动器一起分发，用来提供「种子地图」功能：
+主世界 / 下界 / 末地三维度的生物群系彩色地图，以及村庄、神殿、海底遗迹、
+林地府邸、要塞、下界堡垒、猪灵堡垒、末地城等结构的定位，可平移缩放查看任意坐标。
+
+启动器只把 seedmap.exe 当作独立子进程调用（命令行 + stdout 简单协议），
+属于聚合分发。全部计算在用户本机离线完成，不上传任何种子数据。
+
+版权与来源
+----------
+cubiomes
+作者：Cubitect
+仓库：https://github.com/Cubitect/cubiomes
+许可证：MIT License，原文见同目录 LICENSE.txt
+本目录二进制基于 cubiomes master 分支源码编译（支持到 Minecraft 1.21 Winter Drop）。
+
+启动器自写的适配层 mapcli.c / tccshim.c 同样以 MIT 许可提供，
+完整源码（含未经修改的 cubiomes 全部源码）见同目录 cubiomes-src/。
+
+对 cubiomes 源码所做的两处修改（均为适配 TCC 编译器，不影响计算结果）
+----------
+1. generator.c：genBiomes 的 beta 分支里 SurfaceNoiseBeta snb 由栈上改为
+   堆分配（malloc / free），绕开 TCC win64 在 >4K 栈帧时的序言对齐 bug。
+2. biomenoise.c：genBiomeNoiseScaled 中把 r.scale > 4 的比较结果提前存入
+   命名变量 noiseOpt，再传给 genBiomeNoise3D，绕开 TCC 实参求值临时变量
+   被覆盖导致传 NULL 给 memcpy 的 bug。
+
+重新编译方法（无需 MSVC）
+----------
+1. 下载 TinyCC 0.9.27 win64：https://download.savannah.gnu.org/releases/tinycc/
+2. TCC 的 include/math.h 在 win64 下有几处 x86 内联汇编报错，用
+   "#if defined(__i386__) ... #else 纯C实现 #endif" 包起来（仅编译器头文件，
+   不属于本目录源码补丁）。
+3. 在 cubiomes 源码目录执行：
+     tcc.exe -D_WIN32 -I"<源码目录>" mapcli.c tccshim.c finders.c generator.c ^
+       layers.c biomenoise.c biomes.c noise.c util.c quadbase.c -o seedmap.exe
+
+命令行协议
+----------
+tile <ver> <dim> <seed> <scale> <x> <z> <w> <h>
+     先输出 "OK\n"，再输出 w*h 个 RGB 像素；scale 为 4/16/64/256
+structs <ver> <dim> <seed> <bx0> <bz0> <bx1> <bz1>
+     每行 "<结构类型> <方块x> <方块z>"，以 "END" 结束
+stronghold <ver> <seed>    每行 "<方块x> <方块z>"，以 "END" 结束
+     要塞为几何近似位置（nextStronghold 传 NULL，与 Chunkbase 做法一致），
+     与游戏内实际楼梯间相差不超过 112 格；地图标注无需逐一群系精修
+spawn <ver> <seed>         一行 "<方块x> <方块z>"
+slime <seed> <cx0> <cz0> <cx1> <cz1>
+     每行 "<区块x> <区块z>"，以 "END" 结束
+biome <ver> <dim> <seed> <x> <z>   一行群系 id
+
+说明：启动器对较大的瓦片会横向切成多条带，并行启动多个 seedmap.exe 进程
+（最多 4 个）分别计算后拼接，以缩短出图时间；各命令本身仍是单线程的。
+
+文件清单
+--------
+seedmap.exe       种子地图引擎（cubiomes + mapcli 静态编译，约 668 KB，零运行库依赖）
+LICENSE.txt       cubiomes MIT License 原文
+cubiomes-src/     完整源码：cubiomes 原件 + mapcli.c + tccshim.c（含上述两处补丁）

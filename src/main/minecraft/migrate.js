@@ -1,6 +1,7 @@
 // 从其他启动器搬家：探测 PCL2 / HMCL 的安装目录、实例、存档与设置，导入本启动器
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const { app } = require('electron');
 const config = require('../config');
 const logger = require('../logger');
@@ -448,4 +449,103 @@ async function run(payload, onProgress) {
   return result;
 }
 
-module.exports = { detect, detectIn, run };
+module.exports = { detect, detectIn, run, changeGameDir, rewriteInstanceDirs };
+
+/* ============================================================================
+ * 全局游戏目录变更（设置页「游戏目录」）
+ *
+ * 早先设置里把目录改到别的盘后游戏文件照样进 C 盘：
+ *  - 默认实例把旧路径快照在自己的 gameDir 里（现已改为空串跟随全局）
+ *  - 版本隔离实例的 gameDir 是「旧全局目录/instances/xxx」绝对路径
+ * 这里在切换目录时把仍位于旧目录之下的实例路径整体改写，并可选移动全部文件。
+ * ========================================================================== */
+
+/**
+ * 纯函数：把「位于 oldDir 之下」的实例目录前缀替换为 newDir。
+ *  - gameDir 为空（跟随全局，如默认实例）→ 不动
+ *  - 恰好等于旧目录（rel 为 ''）→ 映射到新目录本身
+ *  - 在旧目录之外（rel 以 '..' 开头或跨盘符）→ 不动，尊重单独指定
+ * 返回 { instances: 新映射, changed: {id: 新路径} }
+ */
+function rewriteInstanceDirs(list, oldDir, newDir) {
+  const o = path.resolve(oldDir);
+  const n = path.resolve(newDir);
+  const out = {};
+  const changed = {};
+  for (const [id, inst] of Object.entries(list || {})) {
+    const nd = (inst && inst.gameDir) || '';
+    if (!nd) { out[id] = inst; continue; }
+    const rel = path.relative(o, path.resolve(nd));
+    const inside = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    if (inside) {
+      const np = rel === '' ? n : path.join(n, rel);
+      out[id] = { ...inst, gameDir: np };
+      changed[id] = np;
+    } else {
+      out[id] = inst;
+    }
+  }
+  return { instances: out, changed };
+}
+
+/**
+ * 用系统自带 robocopy 把旧目录整体移动到新目录（跨盘也可）。
+ *   /E 含空子目录   /MOVE 复制后删除源（源根也会删除，C 盘清得干净）
+ *   /IS 相同文件也重拷，保证源文件都经过「复制→删除」   /R:1 /W:1 占用文件只重试一次
+ * robocopy 退出码 0~7 为成功，≥8 为失败。
+ */
+function robocopyMove(from, to) {
+  return new Promise((resolve) => {
+    const args = ['/E', '/MOVE', '/IS', '/NFL', '/NDL', '/NP', '/R:1', '/W:1', from, to];
+    let log = '';
+    let child;
+    try {
+      child = spawn('robocopy', args, { windowsHide: true });
+    } catch (e) { return resolve({ code: -1, log: String(e) }); }
+    child.stdout.on('data', (c) => { log += c; });
+    child.stderr.on('data', (c) => { log += c; });
+    child.on('error', (e) => resolve({ code: -1, log: String(e) }));
+    child.on('close', (code) => resolve({ code, log }));
+  });
+}
+
+/**
+ * 变更全局游戏目录。
+ * @param {string} newDir 新目录
+ * @param {boolean} move 是否把旧目录文件一起移动过去
+ * @param {(step:string)=>void} [onStep] 过程回调（仅日志用）
+ */
+async function changeGameDir(newDir, move, onStep) {
+  const oldDir = path.resolve(config.get('gameDir'));
+  const target = path.resolve(String(newDir || '').trim());
+  if (!target) throw new Error('请选择有效的游戏目录');
+  if (target === oldDir) throw new Error('新目录与当前目录相同');
+  // 不允许把游戏目录设到启动器自己的数据目录里（配置会和游戏文件互相嵌套）
+  try {
+    const userData = path.resolve(app.getPath('userData'));
+    if (target === userData || path.relative(userData, target) === '') {
+      throw new Error('游戏目录不能设置为启动器的数据目录');
+    }
+  } catch (e) { if (e.message.startsWith('游戏目录不能')) throw e; }
+
+  fs.mkdirSync(target, { recursive: true });
+
+  let robocopyCode = null;
+  const oldExists = exists(oldDir);
+  if (move && oldExists) {
+    if (onStep) onStep('move');
+    const r = await robocopyMove(oldDir, target);
+    robocopyCode = r.code;
+    if (robocopyCode >= 8) {
+      logger.warn(`robocopy move ${oldDir} -> ${target} failed (${robocopyCode}): ${r.log.slice(-400)}`);
+      throw new Error(`文件移动失败（robocopy 退出码 ${robocopyCode}），目录设置未更改。通常是文件被占用，请先关闭游戏后重试。`);
+    }
+    logger.info(`robocopy move -> ${target}, code ${robocopyCode}`);
+  }
+
+  const list = config.get('instances') || {};
+  const { instances: rewritten, changed } = rewriteInstanceDirs(list, oldDir, target);
+  config.update({ gameDir: target, instances: rewritten });
+
+  return { oldDir, newDir: target, moved: !!move && oldExists, changed, robocopyCode };
+}

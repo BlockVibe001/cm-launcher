@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CM Minecraft Launcher",
+  "version": "1.0.0",
+  "identifier": "com.cm.blockvibe.launcher",
+  "build": {
+    "frontendDist": "../../src/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "CM Minecraft Launcher",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 620,
+        "decorations": false,
+        "transparent": false,
+        "backgroundColor": "#0a0a0c",
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src https: data: file: asset: http://asset.localhost; media-src file: https: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "../../resources/tools/": "resources/tools/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": ["SimpChinese"]
+      }
+    }
+  }
+}

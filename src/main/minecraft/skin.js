@@ -280,6 +280,24 @@ async function currentSkin() {
   const account = config.get('account');
   if (!account || !account.uuid) return null;
   const fallbackName = account.username || '';
+
+  // 离线账号：游戏不连皮肤服务器，显示它自己绑定过的本地皮肤。
+  // 正版/皮肤站账号不走这里 —— 它们的皮肤永远以服务器实时数据为准，
+  // 这样从离线切回正版时，皮肤会自动换回正版那一套。
+  if (account.type === 'offline' && account.skinPath && fs.existsSync(account.skinPath)) {
+    try {
+      const buf = fs.readFileSync(account.skinPath);
+      validatePng(buf);
+      return {
+        dataUrl: toDataUrl(buf),
+        model: account.skinModel || 'classic',
+        name: fallbackName,
+        source: 'local',
+      };
+    } catch (e) {
+      logger.warn(`离线账号绑定皮肤读取失败：${e.message}`);
+    }
+  }
   try {
     if (account.type === 'microsoft') {
       const info = await fetchOfficialSkin(account.uuid, 6000);
@@ -323,6 +341,47 @@ async function currentSkin() {
   return null;
 }
 
+/* ---------- ⑦ 最近使用 ---------- */
+
+/**
+ * 使用一张皮肤：校验后写入「最近使用」（去重置顶、保留 12 条），
+ * 并绑定到当前账号。离线账号的皮肤中心预览 / 顶栏头像随后就显示它；
+ * 正版账号虽然也记了绑定，但 currentSkin 只认服务器皮肤，切回来自动恢复正版外观。
+ */
+function useSkin(filePath) {
+  const full = path.resolve(String(filePath || ''));
+  if (!fs.existsSync(full)) throw new Error('皮肤文件不存在');
+  const buf = fs.readFileSync(full);
+  validatePng(buf);
+  const name = path.basename(full);
+
+  let hist = (config.get('skinHistory') || []).filter((h) => h && h.path !== full);
+  hist.unshift({ path: full, name, t: Date.now() });
+  config.set('skinHistory', hist.slice(0, 12));
+
+  const account = config.get('account');
+  if (account) config.setAccount({ ...account, skinPath: full });
+
+  logger.info(`使用皮肤：${full}`);
+  return { path: full, name, dataUrl: toDataUrl(buf) };
+}
+
+/** 读取最近使用列表：顺手剔除已经被删掉的文件，预览图直接读本地 PNG */
+function history() {
+  const hist = config.get('skinHistory') || [];
+  const out = [];
+  for (const h of hist) {
+    if (!h || !h.path || !fs.existsSync(h.path)) continue;
+    let dataUrl = '';
+    try {
+      const st = fs.statSync(h.path);
+      if (st.size <= 512 * 1024) dataUrl = toDataUrl(fs.readFileSync(h.path));
+    } catch { continue; }
+    out.push({ path: h.path, name: h.name || path.basename(h.path), t: h.t, dataUrl });
+  }
+  return out;
+}
+
 module.exports = {
   resolveUuid,
   fetchOfficialSkin,
@@ -335,4 +394,6 @@ module.exports = {
   uploadOfficial,
   uploadYggdrasil,
   browseLibrary,
+  useSkin,
+  history,
 };
