@@ -15,6 +15,7 @@ $root = Resolve-Path "$PSScriptRoot/.."
 $tauriDir = Join-Path $root "tauri"
 $confPath = Join-Path $tauriDir "src-tauri\tauri.conf.json"
 $pkgPath = Join-Path $tauriDir "package.json"
+$cargoPath = Join-Path $tauriDir "src-tauri\Cargo.toml"
 
 function Fail($m) { Write-Host "[release] $m" -ForegroundColor Red; exit 1 }
 
@@ -36,6 +37,17 @@ if ($Version) {
         $t2 = [regex]::Replace($t, '("version"\s*:\s*")[^"]+(")', "`${1}$Version`${2}")
         [System.IO.File]::WriteAllText($f, $t2, (New-Object System.Text.UTF8Encoding($false)))
     }
+    # Cargo.toml：只改 [package] 段第一处 version（CARGO_PKG_VERSION 是 update:version 的数据源）
+    $lines = [System.IO.File]::ReadAllLines($cargoPath)
+    $inPackage = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\[(.+)\]') { $inPackage = ($Matches[1] -eq 'package'); continue }
+        if ($inPackage -and $lines[$i] -match '^(version\s*=\s*")[^"]+(")') {
+            $lines[$i] = $lines[$i] -replace '^(version\s*=\s*")[^"]+(")', "`${1}$Version`${2}"
+            break
+        }
+    }
+    [System.IO.File]::WriteAllLines($cargoPath, $lines)
     & git -C $root commit -am "chore(release): v$Version"
     if ($LASTEXITCODE -ne 0) { Fail "版本号提交失败" }
     & git -C $root push
