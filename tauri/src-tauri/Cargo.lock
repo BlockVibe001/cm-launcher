@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "cm-launcher"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "encoding_rs",
