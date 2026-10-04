@@ -7189,7 +7189,7 @@ function renderSettings(page) {
       <div class="page-sub" style="margin-bottom:14px">填一个能返回更新清单 JSON 的地址，启动器会比对版本并下载新版安装包</div>
       <div class="field">
         <label>更新地址</label>
-        <input class="input" id="up-url" placeholder="https://example.com/latest.json">
+        <input class="input" id="up-url" placeholder="https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json">
         <div class="hint-text">JSON 需含 version 与 installer，可选 notes / publishedAt / sha256 / page。留空则不检查。当前版本 <b id="up-cur">—</b>。</div>
       </div>
       <label class="ui-check"><input type="checkbox" id="up-auto"> 启动时自动检查更新（6 小时内只查一次）</label>
@@ -7522,7 +7522,7 @@ function renderSettings(page) {
 
   // ========== 更新 ==========
   const up = state.config.update || {};
-  $('up-url').value = up.url || '';
+  $('up-url').value = up.url || 'https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json';
   $('up-auto').checked = up.autoCheck !== false;
   $('up-cur').textContent = `v${(state.updateInfo || {}).version || '1.0.0'}`;
 
