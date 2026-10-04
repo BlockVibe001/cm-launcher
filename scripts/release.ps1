@@ -1,4 +1,4 @@
-# CM Minecraft Launcher 一键发布脚本
+﻿# CM Minecraft Launcher 一键发布脚本
 # 流程：读版本号（可顺带升级）→ release 打包 → 生成 SHA256 → 创建/更新 GitHub Release
 #
 # 用法（PowerShell）：
@@ -18,9 +18,14 @@ $pkgPath = Join-Path $tauriDir "package.json"
 
 function Fail($m) { Write-Host "[release] $m" -ForegroundColor Red; exit 1 }
 
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    Fail "未找到 gh CLI（winget install GitHub.cli），并先执行 gh auth login"
+$ghCmd = (Get-Command gh -ErrorAction SilentlyContinue).Source
+if (-not $ghCmd) {
+    foreach ($c in @("$env:ProgramFiles\GitHub CLI\gh.exe", "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe")) {
+        if (Test-Path $c) { $ghCmd = $c; break }
+    }
 }
+if (-not $ghCmd) { Fail "未找到 gh CLI（winget install GitHub.cli），并先执行 gh auth login" }
+Set-Alias gh $ghCmd
 
 # ---- 1) 版本号（可选升级，两处保持一致）----
 if ($Version) {
@@ -57,15 +62,29 @@ $setup = Get-ChildItem $nsisDir -Filter "*_x64-setup.exe" |
 if (-not $setup) { Fail "未找到版本 $ver 的安装包" }
 Write-Host "[release] 安装包：$($setup.FullName)" -ForegroundColor Green
 
-# ---- 4) SHA256 ----
+# ---- 4) SHA256 + 更新清单 ----
 $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
 $sumPath = Join-Path $env:TEMP "$($setup.Name).sha256.txt"
 "$hash  $($setup.Name)" | Set-Content -NoNewline -Encoding ascii $sumPath
 Write-Host "[release] SHA256：$hash" -ForegroundColor DarkGray
 
+# update.json：启动器自更新清单（地址永远指向 latest 下载路由，装完新版不用改）
+$setupName = $setup.Name
+$manifest = @{
+    version     = $ver
+    notes       = "CM Minecraft Launcher $tag"
+    publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    installer   = "https://github.com/BlockVibe001/cm-launcher/releases/download/$tag/$setupName"
+    sha256      = $hash
+    page        = "https://github.com/BlockVibe001/cm-launcher/releases/latest"
+} | ConvertTo-Json
+$manifestPath = Join-Path $env:TEMP "update.json"
+[System.IO.File]::WriteAllText($manifestPath, $manifest, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "[release] 更新清单：$manifestPath" -ForegroundColor DarkGray
+
 # ---- 5) 创建 / 更新 GitHub Release ----
 if ($NotesFile) {
-    gh release create $tag $setup.FullName $sumPath --title $tag --notes-file $NotesFile 2>$null
+    gh release create $tag $setup.FullName $sumPath $manifestPath --title $tag --notes-file $NotesFile 2>$null
 } else {
     $notes = @"
 CM Minecraft Launcher $tag
@@ -76,13 +95,17 @@ CM Minecraft Launcher $tag
 
 校验
 - 安装包 SHA256 见随附 .sha256.txt：$hash
+
+更新
+- 已安装旧版的用户：启动器 设置 → 软件更新 → 检查更新，会自动下载并静默安装本版。
+- 更新地址：https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json
 "@
-    gh release create $tag $setup.FullName $sumPath --title $tag --notes $notes 2>$null
+    gh release create $tag $setup.FullName $sumPath $manifestPath --title $tag --notes $notes 2>$null
 }
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[release] Release 已存在，改为上传覆盖最新产物…" -ForegroundColor Yellow
-    gh release upload $tag $setup.FullName $sumPath --clobber
+    gh release upload $tag $setup.FullName $sumPath $manifestPath --clobber
     if ($LASTEXITCODE -ne 0) { Fail "上传 Release 失败" }
 }
 

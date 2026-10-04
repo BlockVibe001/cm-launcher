@@ -10,6 +10,7 @@ mod mc;
 mod multiplayer;
 mod net;
 mod state;
+mod updater;
 
 use error::CmdResult;
 use serde_json::{json, Map, Value};
@@ -243,6 +244,33 @@ fn log_history() -> Vec<logger::LogEntry> {
     logger::history()
 }
 
+// ================= 启动器自更新 =================
+
+#[tauri::command(rename = "update:version")]
+fn update_version() -> Value {
+    json!({ "version": updater::version(), "portable": false })
+}
+
+#[tauri::command(rename = "update:check")]
+async fn update_check(url: String) -> CmdResult<Value> {
+    updater::check(&url).await
+}
+
+#[tauri::command(rename = "update:download")]
+async fn update_download(app: tauri::AppHandle, manifest: Value) -> CmdResult<Value> {
+    updater::download(&app, &manifest).await
+}
+
+#[tauri::command(rename = "update:install")]
+fn update_install(app: tauri::AppHandle, p: String) -> CmdResult<Value> {
+    updater::install(&app, &p)
+}
+
+#[tauri::command(rename = "update:open")]
+fn update_open(url: String) -> CmdResult<()> {
+    updater::open_page(&url)
+}
+
 // ================= 多人 / 联机 =================
 
 // ---- 服务器 Ping ----
@@ -450,6 +478,11 @@ fn main() {
             pick_file,
             dialog_files,
             log_history,
+            update_version,
+            update_check,
+            update_download,
+            update_install,
+            update_open,
             server_ping,
             server_ping_all,
             lan_detect,

@@ -18,8 +18,6 @@
   const STUBS = {
     'versions:manifest': () => ({ versions: [] }),
     'versions:installed': () => [],
-    'update:version': () => ({ version: '1.0.0', portable: true }),
-    'update:check': () => ({ hasUpdate: false }),
     'home:news': () => [],
     'home:playLog': () => ({}),
     'skin:current': () => null,
@@ -292,9 +290,9 @@
     easytierLeave: () => call('easytier:leave'),
     onEasytierState: on('easytier:state'),
 
-    // 自更新
+    // 自更新：用户没填地址时回落到官方 Release 清单（GitHub 的 latest 下载路由）
     updaterVersion: () => call('update:version'),
-    updaterCheck: (url) => call('update:check', { url }),
+    updaterCheck: (url) => call('update:check', { url: url || 'https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json' }),
     updaterDownload: (manifest) => call('update:download', { manifest }),
     updaterInstall: (p) => call('update:install', { p }),
     updaterOpen: (url) => call('update:open', { url }),
