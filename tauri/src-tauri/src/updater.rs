@@ -39,18 +39,34 @@ fn is_http(u: &str) -> bool {
     u.starts_with("http://") || u.starts_with("https://")
 }
 
+/// 传输层失败时经 GitHub 加速镜像重试（国内直连 GitHub 常不可达；本机 hosts 指向 127.0.0.1 的加速方案同理兜不住）。
+/// 仅对“发不出去”回退，HTTP 状态错误原样抛出。镜像前缀可用 config 的 update.mirror 覆盖。
+async fn try_send(url: &str) -> CmdResult<reqwest::Response> {
+    match HTTP.get(url).send().await {
+        Ok(r) => Ok(r),
+        Err(direct_err) => {
+            let mv = crate::config::get("update.mirror");
+            let prefix = mv
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("https://gh-proxy.com/");
+            let mirrored = if prefix.ends_with('/') { format!("{prefix}{url}") } else { format!("{prefix}/{url}") };
+            match HTTP.get(&mirrored).send().await {
+                Ok(r) => Ok(r),
+                Err(_) => Err(AppError::Msg(format!("连不上更新地址：{direct_err}"))),
+            }
+        }
+    }
+}
+
 /// 读清单。地址由用户自己填，任何 host 都接受，不套国内镜像替换。
 pub async fn check(url: &str) -> CmdResult<Value> {
     let target = url.trim();
     if !is_http(target) {
         return Err(AppError::Msg("更新地址无效，需要以 http:// 或 https:// 开头".into()));
     }
-    let res = HTTP
-        .get(target)
-        .header("Cache-Control", "no-cache")
-        .send()
-        .await
-        .map_err(|e| AppError::Msg(format!("连不上更新地址：{e}")))?;
+    let res = try_send(target).await?;
     if !res.status().is_success() {
         return Err(AppError::Msg(format!("读取更新清单失败：HTTP {}", res.status().as_u16())));
     }
@@ -94,11 +110,7 @@ pub async fn download(app: &AppHandle, manifest: &Value) -> CmdResult<Value> {
     let dest = dir.join(&base);
     let tmp = dir.join(format!("{base}.part"));
 
-    let res = HTTP
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Msg(format!("下载安装包失败：{e}")))?;
+    let res = try_send(&url).await?;
     if !res.status().is_success() {
         return Err(AppError::Msg(format!("下载安装包失败：HTTP {}", res.status().as_u16())));
     }

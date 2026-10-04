@@ -16,7 +16,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 encoding_rs = "0.8"
 thiserror = "2"
 chrono = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "native-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "io-util", "fs"] }
 futures-util = "0.3"
 sha1 = "0.10"
