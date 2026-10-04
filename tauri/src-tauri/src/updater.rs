@@ -39,24 +39,31 @@ fn is_http(u: &str) -> bool {
     u.starts_with("http://") || u.starts_with("https://")
 }
 
-/// 传输层失败时经 GitHub 加速镜像重试（国内直连 GitHub 常不可达；本机 hosts 指向 127.0.0.1 的加速方案同理兜不住）。
-/// 仅对“发不出去”回退，HTTP 状态错误原样抛出。镜像前缀可用 config 的 update.mirror 覆盖。
+/// GitHub 资源下载兜底：直连失败（传输层错误），或 302 后落到被 hosts 屏蔽的域上拿到 403/404，
+/// 都改经加速镜像重取（镜像在服务端取文件，不受本机 hosts 影响）。镜像前缀可用 config 的 update.mirror 覆盖。
 async fn try_send(url: &str) -> CmdResult<reqwest::Response> {
-    match HTTP.get(url).send().await {
+    let first = HTTP.get(url).send().await;
+    let needs_fallback = match &first {
+        Err(_) => true,
+        Ok(r) => url.contains("github.com") && matches!(r.status().as_u16(), 403 | 404),
+    };
+    if !needs_fallback {
+        return first.map_err(|e| AppError::Msg(e.to_string()));
+    }
+    let direct_note = match &first {
+        Err(e) => e.to_string(),
+        Ok(r) => format!("HTTP {}", r.status().as_u16()),
+    };
+    let mv = crate::config::get("update.mirror");
+    let prefix = mv
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("https://gh-proxy.com/");
+    let mirrored = if prefix.ends_with('/') { format!("{prefix}{url}") } else { format!("{prefix}/{url}") };
+    match HTTP.get(&mirrored).send().await {
         Ok(r) => Ok(r),
-        Err(direct_err) => {
-            let mv = crate::config::get("update.mirror");
-            let prefix = mv
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("https://gh-proxy.com/");
-            let mirrored = if prefix.ends_with('/') { format!("{prefix}{url}") } else { format!("{prefix}/{url}") };
-            match HTTP.get(&mirrored).send().await {
-                Ok(r) => Ok(r),
-                Err(_) => Err(AppError::Msg(format!("连不上更新地址：{direct_err}"))),
-            }
-        }
+        Err(_) => Err(AppError::Msg(format!("连不上更新地址：{direct_note}"))),
     }
 }
 
@@ -110,7 +117,8 @@ pub async fn download(app: &AppHandle, manifest: &Value) -> CmdResult<Value> {
     let dest = dir.join(&base);
     let tmp = dir.join(format!("{base}.part"));
 
-    let res = try_send(&url).await?;
+    let url_enc = url.replace(' ', "%20"); // GitHub 资源名带空格时必须编码，否则 404
+    let res = try_send(&url_enc).await?;
     if !res.status().is_success() {
         return Err(AppError::Msg(format!("下载安装包失败：HTTP {}", res.status().as_u16())));
     }

@@ -81,12 +81,15 @@ $sumPath = Join-Path $env:TEMP "$($setup.Name).sha256.txt"
 Write-Host "[release] SHA256：$hash" -ForegroundColor DarkGray
 
 # update.json：启动器自更新清单（地址永远指向 latest 下载路由，装完新版不用改）
+# GitHub 会把资源名中的空格规范成点号，URL 必须用点号版名字，否则 404
 $setupName = $setup.Name
+$assetName = $setupName -replace ' ', '.'
+$setupUrl = "https://github.com/BlockVibe001/cm-launcher/releases/download/$tag/$assetName"
 $manifest = @{
     version     = $ver
     notes       = "CM Minecraft Launcher $tag"
     publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    installer   = "https://github.com/BlockVibe001/cm-launcher/releases/download/$tag/$setupName"
+    installer   = $setupUrl
     sha256      = $hash
     page        = "https://github.com/BlockVibe001/cm-launcher/releases/latest"
 } | ConvertTo-Json
