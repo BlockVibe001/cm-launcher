@@ -33,6 +33,7 @@ fn defaults() -> Value {
         "jvmArgs": "",
         "speedBoost": true,           // 游戏加速：自适应堆 + G1 调优参数 + 提升进程优先级
         "mirror": "bmcl",
+        "language": "auto",           // 界面语言：auto | zh-CN | en（全球化发布用）
         "showSnapshots": false,
         "selectedInstance": "default",
         "instances": {

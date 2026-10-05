@@ -23,19 +23,19 @@
         <div class="brand-cube"></div>
         <div class="brand-text">
           <div class="brand-name">BlockVibe <span>Launcher</span></div>
-          <div class="brand-sub">方块之心，随你出发</div>
+          <div class="brand-sub" data-i18n="brand.sub">方块之心，随你出发</div>
         </div>
       </div>
 
       <div class="topbar-search">
         <span class="search-ico">⌕</span>
-        <input id="top-search" type="text" placeholder="搜索…" autocomplete="off">
+        <input id="top-search" type="text" placeholder="搜索…" autocomplete="off" data-i18n-ph="topbar.search">
         <kbd>Ctrl K</kbd>
       </div>
 
       <div class="topbar-right">
-        <button class="win-btn" id="top-browser" type="button" title="内置浏览器 · MC 百科 / 找资源 / 登录" style="font-size:16px">🌐</button>
-        <button class="btn-launch-mini" id="top-launch" type="button">▶ 启动</button>
+        <button class="win-btn" id="top-browser" type="button" title="内置浏览器 · MC 百科 / 找资源 / 登录" style="font-size:16px" data-i18n-title="topbar.browser">🌐</button>
+        <button class="btn-launch-mini" id="top-launch" type="button" data-i18n="topbar.launch">▶ 启动</button>
         <div class="user-chip" id="top-user" title="点击前往账号页">
           <div class="user-avatar" id="top-avatar">👤</div>
           <div class="user-meta">
@@ -44,9 +44,9 @@
           </div>
         </div>
         <div class="win-controls">
-          <button class="win-btn" id="win-min" type="button" title="最小化">—</button>
-          <button class="win-btn" id="win-max" type="button" title="最大化">▢</button>
-          <button class="win-btn close" id="win-close" type="button" title="关闭">✕</button>
+          <button class="win-btn" id="win-min" type="button" title="最小化" data-i18n-title="topbar.minimize">—</button>
+          <button class="win-btn" id="win-max" type="button" title="最大化" data-i18n-title="topbar.maximize">▢</button>
+          <button class="win-btn close" id="win-close" type="button" title="关闭" data-i18n-title="topbar.close">✕</button>
         </div>
       </div>
     </header>
@@ -55,39 +55,39 @@
       <!-- 左侧导航 -->
       <nav class="sidenav">
         <button class="nav-item active" data-page="home" type="button">
-          <span class="nav-ico">⌂</span><span class="nav-label">首页</span>
+          <span class="nav-ico">⌂</span><span class="nav-label" data-i18n="nav.home">首页</span>
         </button>
         <button class="nav-item" data-page="instances" type="button">
-          <span class="nav-ico">▣</span><span class="nav-label">实例管理</span>
+          <span class="nav-ico">▣</span><span class="nav-label" data-i18n="nav.instances">实例管理</span>
         </button>
         <button class="nav-item" data-page="versions" type="button">
-          <span class="nav-ico">▦</span><span class="nav-label">版本管理</span>
+          <span class="nav-ico">▦</span><span class="nav-label" data-i18n="nav.versions">版本管理</span>
         </button>
         <button class="nav-item" data-page="center" type="button">
-          <span class="nav-ico">✿</span><span class="nav-label">资源中心</span>
+          <span class="nav-ico">✿</span><span class="nav-label" data-i18n="nav.center">资源中心</span>
         </button>
         <button class="nav-item" data-page="servers" type="button">
-          <span class="nav-ico">☷</span><span class="nav-label">联机大厅</span>
+          <span class="nav-ico">☷</span><span class="nav-label" data-i18n="nav.servers">联机大厅</span>
         </button>
         <button class="nav-item" data-page="lab" type="button">
-          <span class="nav-ico">⚗</span><span class="nav-label">Axolotl 实验室</span>
+          <span class="nav-ico">⚗</span><span class="nav-label" data-i18n="nav.lab">Axolotl 实验室</span>
         </button>
         <button class="nav-item" data-page="account" type="button">
-          <span class="nav-ico">♟</span><span class="nav-label">账号中心</span>
+          <span class="nav-ico">♟</span><span class="nav-label" data-i18n="nav.account">账号中心</span>
         </button>
         <button class="nav-item" data-page="skins" type="button">
-          <span class="nav-ico">❀</span><span class="nav-label">皮肤中心</span>
+          <span class="nav-ico">❀</span><span class="nav-label" data-i18n="nav.skins">皮肤中心</span>
         </button>
         <button class="nav-item" data-page="downloads" type="button">
-          <span class="nav-ico">⇩</span><span class="nav-label">下载与日志</span>
+          <span class="nav-ico">⇩</span><span class="nav-label" data-i18n="nav.downloads">下载与日志</span>
         </button>
         <button class="nav-item" data-page="settings" type="button">
-          <span class="nav-ico">⚙</span><span class="nav-label">设置</span>
+          <span class="nav-ico">⚙</span><span class="nav-label" data-i18n="nav.settings">设置</span>
         </button>
 
         <div class="sidenav-foot">
           <div class="foot-status" id="foot-status" title="CM Minecraft Launcher"><span class="dot"></span><span id="foot-ver">v1.0.0 · 运行正常</span></div>
-          <div class="foot-license">MIT License · 独立项目</div>
+          <div class="foot-license" data-i18n="foot.license">MIT License · 独立项目</div>
         </div>
       </nav>
 
@@ -113,22 +113,36 @@
   <div class="drop-overlay" id="drop-overlay" hidden>
     <div class="drop-box">
       <div class="drop-ico">📥</div>
-      <div class="drop-title">松开鼠标，智能导入</div>
-      <div class="drop-sub">模组 · 资源包 · 光影 · 数据包 · 世界 · 整合包 · 投影</div>
+      <div class="drop-title" data-i18n="drop.title">松开鼠标，智能导入</div>
+      <div class="drop-sub" data-i18n="drop.sub">模组 · 资源包 · 光影 · 数据包 · 世界 · 整合包 · 投影</div>
     </div>
   </div>
 
   <!-- 全屏加载遮罩 -->
   <div class="global-loading" id="global-loading" hidden>
     <div class="spinner"></div>
-    <div class="loading-text" id="loading-text">加载中…</div>
+    <div class="loading-text" id="loading-text" data-i18n="loading.text">加载中…</div>
   </div>
 
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
+  <script src="locales/zh-CN.js"></script>
+  <script src="locales/en.js"></script>
+  <script src="i18n.js"></script>
   <script src="api-adapter.js"></script>
   <script src="glass-motion.js"></script>
   <script src="app.js"></script>
+  <script src="feat-hooks.js"></script>
+  <script src="feat_crash.js"></script>
+  <script src="feat_perf.js"></script>
+  <script src="feat_search.js"></script>
+  <script src="feat_share.js"></script>
+  <script src="feat_theme.js"></script>
+  <script src="feat_onboard.js"></script>
+  <script src="feat_skin.js"></script>
+  <script src="feat_update.js"></script>
+  <script src="feat_server.js"></script>
+  <script src="feat_backup.js"></script>
 </body>
 </html>

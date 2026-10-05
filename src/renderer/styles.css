@@ -417,7 +417,8 @@ input, button, select, textarea {
 .hero {
   position: relative;
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  /* overflow 不能 hidden：增强下拉（.esel-list 绝对定位）在版本胶囊下方弹出会被裁掉 */
+  overflow: visible;
   min-height: 320px;
   margin-bottom: 20px;
   border: 1px solid var(--border);
@@ -2279,11 +2280,17 @@ input[type="color"].input { height: 38px; padding: 3px; cursor: pointer; }
 .shot-view-acts { align-items: center; margin-top: 0; padding: 10px 16px 14px; gap: 8px; }
 .shot-view-acts .hint-text { margin-right: auto; }
 
-/* ========== 滚动条 ========== */
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 5px; border: 2px solid var(--bg-0); }
-::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+/* ========== 滚动条：全局统一，深/浅色都清晰可见 ========== */
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.38);
+  border-radius: 6px;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.58); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* 响应式 */
 @media (max-width: 1100px) {
@@ -2554,15 +2561,16 @@ select.input option { background: #121826; color: var(--text); }
 }
 
 /* ---------- 12. 滚动条 ---------- */
-::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.13);
-  border: 2px solid transparent;
+  background: rgba(148, 163, 184, 0.38);
+  border: 2px solid rgba(0, 0, 0, 0.35);
   background-clip: padding-box;
   border-radius: 6px;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.58); background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* 下拉选择器选项滚动条 */
 select.input { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
@@ -3781,8 +3789,8 @@ body[data-mode="light"][data-transparent="1"] .sv-card, body[data-mode="light"][
 }
 
 /* ---------- 12. 滚动条 ---------- */
-body[data-mode="light"] ::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.22); }
-body[data-mode="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.36); }
+body[data-mode="light"] ::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.30); border: 2px solid rgba(255, 255, 255, 0.55); background-clip: padding-box; }
+body[data-mode="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.48); background-clip: padding-box; }
 
 /* ---------- 13. Hero 系列 ---------- */
 body[data-mode="light"] .hero {
@@ -4008,3 +4016,152 @@ body[data-material="clear"] .sv-card::before {
 @media (prefers-reduced-motion: reduce) {
   .jelly-release { transition: none; }
 }
+
+/* ---------- 19. 增强下拉：版本/加载器/语言等 select 的自定义弹出列表 ----------
+   原生 select 弹窗在 WebView2 下滚动条不可控，换成自定义列表：
+   自带可见滚动条（走全局滚动条样式）+ 滚轮滚动 + 点击选中。 */
+.esel { position: relative; }
+.esel select {
+  position: absolute; inset: 0; z-index: -1;
+  width: 100%; height: 100%;
+  opacity: 0; pointer-events: none;
+}
+.esel-cur {
+  display: flex; align-items: center; gap: 8px;
+  height: 100%; padding: 0 12px;
+  cursor: pointer; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.esel-cur::after {
+  content: '▾'; font-size: 11px; color: var(--text-faint);
+  margin-left: auto; flex-shrink: 0;
+}
+.esel-list {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 3000;
+  max-height: 280px; overflow-y: auto;
+  background: rgba(18, 22, 30, 0.97);
+  border: 1px solid var(--border-light); border-radius: 10px;
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.55);
+  display: none;
+}
+.esel-list.open { display: block; }
+.esel-opt { padding: 9px 12px; font-size: 13px; color: var(--text); cursor: pointer; }
+.esel-opt:hover { background: var(--bg-3); color: var(--accent); }
+.esel-opt.on { background: rgba(192, 132, 252, 0.14); color: var(--accent); font-weight: 600; }
+body[data-mode="light"] .esel-list { background: rgba(250, 250, 252, 0.98); }
+
+/* 首页版本胶囊等 flex 容器里的增强下拉要撑满剩余空间 */
+.hero-actions .sel-field .esel { flex: 1; min-width: 0; }
+.hero-actions .sel-field .esel-cur { padding: 0 2px; }
+
+/* ================= 苹果风动效体系（全局追加） ================= */
+:root {
+  --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);   /* 苹果标准缓动 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);        /* iOS 大位移缓出 */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 弹出弹性（轻微过冲） */
+  --dur-apple: 0.25s;
+}
+
+/* 通用交互过渡：悬停上浮、按下回弹、边框/阴影/背景渐变 */
+.btn, .btn-launch-mini, .card, .sv-card, .skin-cell, .dl-row, .inst-card,
+.theme-card, .quick-card, .acc-card, .nav-item, .tab, .cat-tab, .chip,
+.option, .hero-badge, .stat-card, .widget, .drop-box, .shot-cell,
+.user-chip, .win-btn, .esel-cur, .topbar-search, .input, select.input,
+.instance-select, textarea.input, .hero-side-card, .brand-cube {
+  transition:
+    transform var(--dur-apple) var(--ease-apple),
+    box-shadow var(--dur-apple) var(--ease-apple),
+    border-color var(--dur-apple) var(--ease-apple),
+    background var(--dur-apple) var(--ease-apple),
+    color var(--dur-apple) var(--ease-apple),
+    filter var(--dur-apple) var(--ease-apple);
+}
+
+/* 悬停：苹果式上浮 + 轻微放大 */
+.card:hover, .sv-card:hover, .skin-cell:hover, .dl-row:hover, .inst-card:hover,
+.quick-card:hover, .acc-card:hover, .theme-card:hover, .stat-card:hover {
+  transform: translateY(-3px) scale(1.012);
+}
+.btn:hover, .btn-launch-mini:hover, .chip:hover, .hero-badge:hover,
+.hero-side-card:hover, .user-chip:hover {
+  transform: translateY(-2px);
+}
+.nav-item:hover { transform: translateX(3px); }
+.tab:hover, .cat-tab:hover { transform: translateY(-1px); }
+.win-btn:hover { transform: scale(1.1); }
+
+/* 按下回弹：苹果触感 */
+.btn:active, .chip:active, .cat-tab:active, .nav-item:active {
+  transform: translateY(0) scale(0.96);
+  transition-duration: 0.08s;
+}
+
+/* 侧栏指示条滑动过渡 */
+.nav-item.active::before {
+  transition: left var(--dur-apple) var(--ease-apple), width var(--dur-apple) var(--ease-apple);
+}
+
+/* 页面切换：淡入 + 上浮（每次切页自动触发） */
+.page { animation: pageIn 0.45s var(--ease-out) both; }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.997); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 弹窗：遮罩淡入 + 面板弹性放大（苹果 sheet 风格） */
+.modal-mask { animation: maskIn 0.3s var(--ease-apple) both; }
+@keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
+.modal { animation: modalIn 0.42s var(--ease-spring) both; transform-origin: 50% 42%; }
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(22px) scale(0.93); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 下拉弹出：淡入 + 下滑渐显 */
+.esel-list.open { animation: eselIn 0.26s var(--ease-spring) both; }
+@keyframes eselIn {
+  from { opacity: 0; transform: translateY(-5px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 首页 hero：标题/徽章逐层升起（苹果开场） */
+.hero-inner > * { animation: riseIn 0.55s var(--ease-out) both; }
+.hero-inner > *:nth-child(1) { animation-delay: 0.02s; }
+.hero-inner > *:nth-child(2) { animation-delay: 0.08s; }
+.hero-inner > *:nth-child(3) { animation-delay: 0.14s; }
+.hero-inner > *:nth-child(4) { animation-delay: 0.20s; }
+.hero-inner > *:nth-child(5) { animation-delay: 0.26s; }
+.hero-inner > *:nth-child(6) { animation-delay: 0.32s; }
+.hero-inner > *:nth-child(7) { animation-delay: 0.38s; }
+.hero-inner > *:nth-child(8) { animation-delay: 0.44s; }
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 主启动徽章：缓慢浮沉（呼吸感） */
+.hero-badge.accent { animation: floatY 3.6s ease-in-out infinite; }
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+/* 进度条：宽度平滑过渡（下载/安装） */
+.progress-fill { transition: width 0.45s var(--ease-apple); }
+
+/* Logo 微动 */
+.brand-cube { transform-origin: center; }
+.brand-cube:hover { transform: rotate(10deg) scale(1.06); }
+
+/* 系统“减少动态”偏好：全部降级为无动画 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
+/* 设备码面板高亮提示 */
+.dc-flash { animation: dcFlash 1.2s var(--ease-apple, ease-out) both; }
+@keyframes dcFlash { 0% { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft); } 100% { box-shadow: none; } }

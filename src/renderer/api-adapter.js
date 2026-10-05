@@ -14,26 +14,8 @@
   const toError = (e) => (e instanceof Error ? e : new Error(typeof e === 'string' ? e : (e && e.message) || String(e)));
   const isNotImpl = (e) => /not found|unknown|not implemented/i.test(String((e && e.message) || e));
 
-  // 未迁移通道的默认返回值（按通道名）。随阶段推进逐步清空。
-  const STUBS = {
-    'versions:manifest': () => ({ versions: [] }),
-    'versions:installed': () => [],
-    'home:news': () => [],
-    'home:playLog': () => ({}),
-    'skin:current': () => null,
-    'skin:localList': () => [],
-    'skin:history': () => [],
-    'downloads:list': () => [],
-    'instances:list': () => [],
-    'java:list': () => [],
-    'java:installed': () => [],
-    'java:home': () => '',
-    'memory:info': () => null,
-    'browser:info': () => ({ open: false }),
-    'wallpaper:live': () => null,
-    'ai:providers': () => [],
-    'migrate:detect': () => [],
-  };
+  // 未迁移通道的默认返回值（按通道名）。已全部实现或移除调用，暂无兜底条目。
+  const STUBS = {};
 
   const call = (channel, args) => invoke(channel, args).catch((e) => {
     if (isNotImpl(e) && Object.prototype.hasOwnProperty.call(STUBS, channel)) {
@@ -42,6 +24,9 @@
     }
     throw toError(e);
   });
+
+  // feat_*.js 独立模块的 invoke 通道（带桩回退与统一报错）
+  window.__invoke = call;
 
   const on = (channel) => (cb) => {
     listen(channel, (e) => cb(e.payload));
@@ -324,8 +309,9 @@
     onGameExit: (cb) => { listen('game:exit', (e) => cb(e.payload)); },
     onDeviceCode: (cb) => {
       let un = null;
-      listen('auth:devicecode', (e) => cb(e.payload)).then((u) => { un = u; });
-      return () => { if (un) un(); };
+      // ready 让调用方先等监听器注册完成再发命令，避免设备码事件漏收（竞态丢验证码）
+      const ready = listen('auth:devicecode', (e) => cb(e.payload)).then((u) => { un = u; return true; });
+      return { ready, off: () => { if (un) un(); } };
     },
   };
 })();

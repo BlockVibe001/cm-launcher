@@ -6,6 +6,108 @@ const ce = (tag, cls, html) => {
   return el;
 };
 
+// i18n 快捷翻译函数（app.js 文案国际化统一入口）
+const t = (key, vars) => (window.i18n ? window.i18n.t(key, vars) : key);
+
+/**
+ * 增强下拉：把原生 select 包成「点开弹列表」的自定义控件。
+ * 原生 select 弹窗在 WebView2 下滚动条不可控、滚轮常划不动，这里换成
+ * 自定义弹出列表（可见滚动条 + 滚轮滚动 + 点击选中）。
+ * 底层 select 保留（绝对定位透明盖层），onchange 事件、value 读写全部照旧。
+ */
+function enhanceSelect(sel) {
+  if (!sel || sel.dataset.esel) return sel;
+  sel.dataset.esel = '1';
+  // 全局注册：切页面 / 开新弹窗时强制关闭所有打开的下拉，避免“切到别的页它还在显示”
+  window.__eselReg = window.__eselReg || [];
+  window.closeAllEsel = window.closeAllEsel || function () {
+    (window.__eselReg || []).forEach((r) => { try { r.close(); } catch (e) {} });
+  };
+  const wrap = ce('div', 'esel');
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+
+  const cur = ce('div', 'esel-cur');
+  wrap.appendChild(cur);
+  const list = ce('div', 'esel-list');
+  wrap.appendChild(list);
+
+  const sync = () => {
+    const o = sel.options[sel.selectedIndex];
+    cur.textContent = o ? o.textContent : '';
+    cur.title = o ? o.textContent : '';
+  };
+
+  // 滚动页面 / 弹窗内容时自动收起下拉（像正常下拉菜单一样，别挡着看内容）；
+  // 但下拉列表自己滚动选项时不能误关，所以排除 esel-list 自身的滚动
+  const onScrollClose = (e) => {
+    const t = e.target;
+    if (t === list || (t && t.classList && t.classList.contains('esel-list'))) return;
+    close();
+  };
+  const openScrollLock = () => document.addEventListener('scroll', onScrollClose, { capture: true });
+  const offScrollLock = () => document.removeEventListener('scroll', onScrollClose, { capture: true });
+
+  const close = () => {
+    list.classList.remove('open');
+    offScrollLock();
+    // 弹层放回原位（.esel 内）。下次 open 再挂到 body：若停留在带
+    // backdrop-filter 的胶囊里，其存在本身不影响（display:none），
+    // 但保持结构干净，避免影响兄弟布局。
+    if (list.parentNode && list.parentNode !== wrap) wrap.appendChild(list);
+  };
+  window.__eselReg.push({ list, close });
+
+  const open = () => {
+    // 关键：列表先挂到 body 再 fixed 定位。.sel-field / .input 等控件带
+    // backdrop-filter（磨砂胶囊），Chromium 会把带 filter 的后代 fixed 元素
+    // 的包含块劫持到该祖先上——视口坐标叠祖先偏移，弹窗就错位（本 bug 根因）。
+    // 挂到 body 后 fixed 只认视口，位置永远正确。
+    document.body.appendChild(list);
+    list.innerHTML = '';
+    // fixed 视口定位：跳过 .hero overflow / .page 滚动容器的裁剪
+    const r = wrap.getBoundingClientRect();
+    list.style.position = 'fixed';
+    list.style.left = r.left + 'px';
+    list.style.width = Math.max(r.width, 140) + 'px';
+    list.style.top = (r.bottom + 6) + 'px';
+    Array.from(sel.options).forEach((o, i) => {
+      const it = ce('div', 'esel-opt' + (o.selected ? ' on' : ''));
+      it.textContent = o.textContent;
+      it.title = o.title || '';
+      it.onclick = () => {
+        sel.selectedIndex = i;
+        sync();
+        close();
+        sel.dispatchEvent(new Event('change'));
+      };
+      list.appendChild(it);
+    });
+    list.classList.add('open');
+    openScrollLock();
+    // 用选项数估算列表高度（避开 reflow 时机导致 offsetHeight 读到 0 的问题）；
+    // 下方空间不够就向上弹（视口内永远可见，>= 容差处理贴底）
+    const estH = Math.min(280, sel.options.length * 38 + 8);
+    if (r.bottom + 6 + estH >= window.innerHeight && r.top - 6 - estH > 0) {
+      list.style.top = (r.top - 6 - estH) + 'px';
+    }
+  };
+
+  cur.onclick = (e) => {
+    e.stopPropagation();
+    if (list.classList.contains('open')) close();
+    else open();
+  };
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) close();
+  }, true);
+  // 列表滚轮滚动天然生效（overflow-y:auto）；同步外部代码改 value 的情况
+  const mo = new MutationObserver(() => sync());
+  mo.observe(sel, { attributes: true, attributeFilter: ['disabled'], childList: true });
+  sync();
+  return sel;
+}
+
 const state = {
   config: null,
   manifest: null,
@@ -417,7 +519,7 @@ function paintWallInfo(info, dim) {
     box.innerHTML =
       `<span class="wall-name">${escapeHtml(info.name)}</span>` +
       `<span class="wall-tag">${WALL_KIND[info.kind] || '文件'}</span>` +
-      `<span>${res}</span><span>${info.sizeMB}MB</span>`;
+      `<span>${res}</span><span>${info.sizeMB ? info.sizeMB + 'MB' : ''}</span>`;
     return;
   }
   if (state.config.wallpaperType === 'custom' && state.config.wallpaperUrl) {
@@ -431,22 +533,27 @@ function paintWallInfo(info, dim) {
 }
 
 async function pickWallpaper() {
-  const info = await api.wallpaperPick();
-  if (!info) return;
-
-  // 实况照片 / JPEG：先解析出可播放的动态片段
-  let livePath = '';
-  if (info.kind === 'live' || info.ext === '.jpg' || info.ext === '.jpeg') {
-    const r = await api.wallpaperLive(info.path);
-    if (r && r.path) livePath = r.path;
-    if (!livePath) {
-      toast(`实况照片解析失败：${(r && r.reason) || '没有找到动态片段'}`, true);
-      if (info.kind === 'live') return;
-    }
-  }
+  // 空壳修复：原来调 wallpaper:pick（后端未实现，返回 null → 点了没反应）。
+  // 改用现成的 dialog:file（rfd 文件选择器），图片/视频都在系统对话框里选。
+  const p = await api.pickFile([
+    { name: '图片 / 视频壁纸', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm'] },
+  ]);
+  if (!p) return;
+  const ext = p.slice(p.lastIndexOf('.')).toLowerCase();
+  const isVideo = /\.(mp4|webm)$/.test(ext);
+  const info = {
+    path: p,
+    name: baseName(p),
+    kind: isVideo ? 'video' : 'image',
+    ext,
+    url: toFileUrl(p),
+    sizeMB: 0,
+  };
+  // 视频直接作为动态壁纸；图片按静态背景。实况照片（jpg 动态片段解析）后端暂缺，按静态图处理
+  const livePath = isVideo ? p : '';
+  const useVideo = isVideo;
 
   // 硬性限制 8K：超过 7680×4320 直接拒绝
-  const useVideo = info.kind === 'video' || (info.kind === 'live' && !!livePath);
   const dim = await probeMedia(useVideo ? toFileUrl(livePath || info.path) : info.url, useVideo);
   if (dim.ok && dim.tooBig) {
     toast(`分辨率 ${dim.w}×${dim.h} 超过 8K 上限（${WALL_MAX_W}×${WALL_MAX_H}），已拒绝`, true);
@@ -455,7 +562,7 @@ async function pickWallpaper() {
 
   applyAndSave({
     wallpaperType: 'custom',
-    wallpaperUrl: info.path,
+    wallpaperUrl: p,
     wallpaperKind: info.kind,
     wallpaperLive: livePath,
   });
@@ -616,6 +723,8 @@ function bindNav() {
 }
 
 function renderPage(page) {
+  // 切换页面时强制关闭所有打开的下拉，避免残留到别的页面
+  if (window.closeAllEsel) window.closeAllEsel();
   // 切换页面时清理定时器
   if (state._memTimer) { clearInterval(state._memTimer); state._memTimer = null; }
   liquidFinish();   // 页面即将重建，先把可能的拖动手势收回
@@ -642,7 +751,9 @@ function renderPage(page) {
     downloads: renderDownloads,
     settings: renderSettings,
   };
-  (renderers[page] || renderHome)(pageEl);
+  if (window.__featPages && window.__featPages[page]) window.__featPages[page](pageEl);
+  else (renderers[page] || renderHome)(pageEl);
+  if (window.__emitHook) window.__emitHook('pageRendered', page, pageEl);
 }
 
 /* ========== 通用：文本输入弹窗（Electron 不支持 prompt） ========== */
@@ -1707,6 +1818,11 @@ async function loadInstanceSettings(inst, gameDir, body) {
     </div>
   `;
 
+  // 启动选项弹窗的下拉也换自定义弹出列表：原生 select 弹窗会跟着滚动条动、切页还可能残留
+  enhanceSelect($('is-version'));
+  enhanceSelect($('is-loader'));
+  enhanceSelect($('is-java'));
+
   $('is-dir-pick').onclick = async () => {
     const d = await api.pickDir();
     if (d) $('is-dir').value = d;
@@ -1844,6 +1960,7 @@ function renderHome(page) {
     vsel.value = curInst.versionId || '';
   };
   fillVersion(state.installed);      // 先用启动时那份垫一下，首屏秒出
+  enhanceSelect(vsel);               // 首页版本下拉换自定义弹出列表（滚动条可见 + 滚轮可滚）
   api.versionsInstalled(instDir).then((list) => {
     if (state.selectedInstance !== wantInst) return;   // 期间用户切了实例就别回填了
     fillVersion(list);
@@ -2697,44 +2814,35 @@ async function openModVersionPicker(m, inst) {
   const gl = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
   const gdir = instGameDir(inst);
 
-  // 获取所有可用版本（不限 MC 版本/加载器）
-  let allVers = [];
-  try {
-    allVers = await api.mrVersions(m.id, '', '');
-  } catch (e) {
-    toast('获取版本列表失败：' + e.message, true);
-    return;
-  }
-  if (allVers.length === 0) { toast('该模组还没有发布任何版本', true); return; }
+  // 打开新弹窗前先关闭所有还开着的下拉
+  if (window.closeAllEsel) window.closeAllEsel();
 
-  // 提取所有可选的 MC 版本和加载器
-  const allMcVersions = [...new Set(allVers.flatMap(v => v.gameVersions || []))].sort().reverse();
-  const allLoaders = [...new Set(allVers.flatMap(v => v.loaders || []))].filter(Boolean);
-
+  // 先建弹窗骨架：版本列表走网络（可能几秒~超时），先给用户即时反馈，
+  // 列表异步到了再填充，避免“点了下载像没反应”。
   const mask = ce('div', 'modal-mask');
   mask.innerHTML = `
     <div class="modal wide">
       <div class="modal-title">下载 ${escapeHtml(m.name)}</div>
-      <div class="hint-text" id="mvp-hint">选择模组加载器和 MC 版本</div>
+      <div class="hint-text" id="mvp-hint">正在获取版本列表…</div>
 
       <div class="field" style="display:flex;gap:12px;margin-bottom:14px">
         <div style="flex:1">
           <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">加载器</label>
-          <select class="input" id="mvp-loader" style="width:100%">
-            ${allLoaders.map(l => `<option value="${l}" ${l === gl ? 'selected' : ''}>${loaderName(l)}</option>`).join('')}
-          </select>
+          <select class="input" id="mvp-loader" style="width:100%"></select>
         </div>
         <div style="flex:1">
           <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">MC 版本</label>
-          <select class="input" id="mvp-mcver" style="width:100%">
-            <option value="">全部版本</option>
-            ${allMcVersions.map(v => `<option value="${v}" ${v === gv ? 'selected' : ''}>${v}</option>`).join('')}
-          </select>
+          <select class="input" id="mvp-mcver" style="width:100%"></select>
         </div>
       </div>
 
       <div class="field">
-        <label>选择模组版本</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <label style="margin:0">选择模组版本</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);cursor:pointer">
+            <input type="checkbox" id="mvp-dlonly">只看已下载版本
+          </label>
+        </div>
         <div id="mvp-versions" style="max-height:240px;overflow:auto"></div>
       </div>
 
@@ -2761,6 +2869,8 @@ async function openModVersionPicker(m, inst) {
   const okBtn = mask.querySelector('#mvp-ok');
   const loaderSel = mask.querySelector('#mvp-loader');
   const mcVerSel = mask.querySelector('#mvp-mcver');
+  enhanceSelect(loaderSel);   // 下载二级菜单：加载器下拉换自定义弹出列表
+  enhanceSelect(mcVerSel);    // 下载二级菜单：MC 版本下拉换自定义弹出列表
 
   const projCache = new Map();
   const projectName = async (pid) => {
@@ -2771,6 +2881,8 @@ async function openModVersionPicker(m, inst) {
   };
 
   let picked = null;
+  let allVers = [];            // 模组版本列表（renderVersions 用；异步拉取后赋值）
+  let localModFiles = new Set();   // 本地已下载 mod 文件名集合（renderVersions 用于标记/筛选）
 
   const renderDeps = async (v) => {
     if (!v) { depsField.style.display = 'none'; return; }
@@ -2791,17 +2903,19 @@ async function openModVersionPicker(m, inst) {
   const renderVersions = () => {
     const selLoader = loaderSel.value;
     const selMcVer = mcVerSel.value;
+    const dlOnly = mask.querySelector('#mvp-dlonly').checked;
 
     // 按选择过滤版本
     let filtered = allVers.filter(v => {
       if (selLoader && !(v.loaders || []).includes(selLoader)) return false;
       if (selMcVer && !(v.gameVersions || []).includes(selMcVer)) return false;
+      if (dlOnly && !(v.files || []).some((f) => localModFiles.has(f.filename))) return false;
       return true;
     });
 
     if (filtered.length === 0) {
-      hintEl.textContent = '没有匹配所选条件的版本';
-      listEl.innerHTML = '<div class="empty-tip">试试其他加载器或版本组合</div>';
+      hintEl.textContent = dlOnly ? '还没有下载过该模组的版本' : '没有匹配所选条件的版本';
+      listEl.innerHTML = '<div class="empty-tip">' + (dlOnly ? '取消勾选「只看已下载版本」查看全部' : '试试其他加载器或版本组合') + '</div>';
       okBtn.disabled = true;
       return;
     }
@@ -2813,7 +2927,8 @@ async function openModVersionPicker(m, inst) {
       <label class="glass" style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;cursor:pointer">
         <input type="radio" name="mvp-v" value="${i}" ${i === 0 ? 'checked' : ''}>
         <span style="flex:1">
-          <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span></div>
+          <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span>
+            ${(v.files || []).some((f) => localModFiles.has(f.filename)) ? '<span class="badge" style="margin-left:6px">已下载</span>' : ''}</div>
           <div style="color:var(--text-dim);font-size:12px">${v.gameVersions.join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
         </span>
       </label>
@@ -2826,9 +2941,31 @@ async function openModVersionPicker(m, inst) {
     renderDeps(picked);
   };
 
+  mask.querySelector('#mvp-dlonly').onchange = renderVersions;
   loaderSel.onchange = renderVersions;
   mcVerSel.onchange = renderVersions;
-  renderVersions();
+
+  // 异步拉取：本地已下载文件集合（快）→ 网络版本列表（慢）→ 填充下拉与列表
+  (async () => {
+    try {
+      (await api.modsList(gdir) || []).forEach((x) => localModFiles.add(x.name));
+    } catch (e) { /* 本地列表读不到就不做已下载标记 */ }
+    try {
+      allVers = await api.mrVersions(m.id, '', '');
+    } catch (e) {
+      toast('获取版本列表失败：' + e.message, true);
+      close();
+      return;
+    }
+    if (allVers.length === 0) { toast('该模组还没有发布任何版本', true); close(); return; }
+    // 提取所有可选的 MC 版本和加载器
+    const allMcVersions = [...new Set(allVers.flatMap(v => v.gameVersions || []))].sort().reverse();
+    const allLoaders = [...new Set(allVers.flatMap(v => v.loaders || []))].filter(Boolean);
+    loaderSel.innerHTML = allLoaders.map(l => `<option value="${l}" ${l === gl ? 'selected' : ''}>${loaderName(l)}</option>`).join('');
+    mcVerSel.innerHTML = '<option value="">全部版本</option>' +
+      allMcVersions.map(v => `<option value="${v}" ${v === gv ? 'selected' : ''}>${v}</option>`).join('');
+    renderVersions();
+  })();
 
   okBtn.onclick = async () => {
     if (!picked) return;
@@ -2956,6 +3093,8 @@ async function openVersionInstaller(opts = {}) {
   };
 
   const renderLoaderBox = async () => {
+    // 这块区域每次都会重建（innerHTML），先把可能还开着的下拉关掉，避免旧弹层残留
+    if (window.closeAllEsel) window.closeAllEsel();
     const box = mask.querySelector('#vi-loaderbox');
     if (loader === 'vanilla') {
       box.innerHTML = '<label>③ 加载器版本</label><div class="hint-text">原版不带 Mod 加载器，进游戏也装不了模组</div>';
@@ -2986,6 +3125,7 @@ async function openVersionInstaller(opts = {}) {
         o.textContent = x.v + x.tag;
         ls.appendChild(o);
       });
+      enhanceSelect(ls);   // 加载器版本下拉也换自定义弹出列表
     } catch (e) {
       box.innerHTML = `<label>③ 加载器版本</label><div class="hint-text" style="color:#fca5a5">加载失败：${e.message}</div>`;
     }
@@ -3003,6 +3143,10 @@ async function openVersionInstaller(opts = {}) {
     };
   });
   mask.querySelector('#vi-version').onchange = () => renderLoaderBox();
+
+  // 版本下拉 / 加载器版本下拉也换自定义弹出列表：原生 select 弹窗会跟着滚动条动、
+  // 切页面还可能残留，自定义下拉固定视口定位、全局关闭机制统一管理。
+  enhanceSelect(mask.querySelector('#vi-version'));
 
   pickTabs('#vi-loaders', 'loader', loader);
   pickTabs('#vi-vtype', 'vtype', vtype);
@@ -3179,6 +3323,7 @@ function renderVersions(page) {
       : (versions[0] && versions[0].id) || '';
   };
   fillVersionOptions();
+  enhanceSelect(sel);   // 版本管理页版本下拉换自定义弹出列表（滚动条可见 + 滚轮可滚）
 
   document.querySelectorAll('#vertype-tabs .tab').forEach((t) => {
     t.onclick = () => {
@@ -3193,6 +3338,8 @@ function renderVersions(page) {
   let currentLoader = inst.modLoader || 'vanilla';
 
   const renderLoaderConfig = async () => {
+    // 区域会重建（innerHTML），先关掉可能开着的下拉避免残留
+    if (window.closeAllEsel) window.closeAllEsel();
     const box = $('loader-config');
     box.innerHTML = '';
     const mcVersion = sel.value;
@@ -3221,6 +3368,7 @@ function renderVersions(page) {
         });
         if (rec) fs.value = rec.version;
         if (inst.loaderVersion) fs.value = inst.loaderVersion;
+        enhanceSelect(fs);   // Forge 版本下拉换自定义弹出列表
       } else {
         const list = currentLoader === 'fabric' ? await api.fabricLoaders() : await api.quiltLoaders();
         box.innerHTML = `
@@ -3237,6 +3385,7 @@ function renderVersions(page) {
           ls.appendChild(o);
         });
         if (inst.loaderVersion) ls.value = inst.loaderVersion;
+        enhanceSelect(ls);   // Fabric/Quilt Loader 版本下拉换自定义弹出列表
       }
     } catch (e) {
       box.innerHTML = `<div style="color:#fca5a5;font-size:13px">加载失败：${e.message}</div>`;
@@ -3539,8 +3688,12 @@ function renderModCategory(inst, box) {
             </div>
             <div class="mod-actions">
               <button class="btn primary" data-act="download">下载</button>
+              ${source === 'modrinth' ? '<button class="btn" data-act="web">网页</button>' : ''}
             </div>
           `;
+          const webBtn = card.querySelector('[data-act="web"]');
+          if (webBtn) webBtn.onclick = () =>
+            api.openUrl(`https://modrinth.com/mod/${m.slug || m.id}`);
           card.querySelector('[data-act="download"]').onclick = async () => {
             // 下载前置：实例还没配好版本 / 加载器，先弹二级菜单补齐，取消就不下了
             const fresh = await ensureRuntime(inst);
@@ -4955,7 +5108,7 @@ function renderAccount(page) {
     let dcInfo = null;
     let autoOpened = false;
 
-    const offDc = api.onDeviceCode((info) => {
+    const sub = api.onDeviceCode((info) => {
       if (info.userCode) {
         dcInfo = info;
         dcPanel.style.display = 'block';
@@ -4964,6 +5117,12 @@ function renderAccount(page) {
         dcStatus.textContent = '等待你在浏览器中完成授权…';
         dcStatus.style.color = 'var(--text-dim)';
         btn.textContent = '等待授权中…';
+        // 面板可能位于当前视口下方，滚过去 + 高亮一下，确保用户能看到验证码
+        try {
+          dcPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          dcPanel.classList.add('dc-flash');
+          setTimeout(() => dcPanel.classList.remove('dc-flash'), 1200);
+        } catch (e) {}
         // 设备码一到手就直接用内置浏览器打开授权页，省掉「再去点一次按钮」。
         // 只开一次：回调可能因为轮询状态多次触发，不能每次都重新导航。
         if (!autoOpened && info.verificationUri) {
@@ -4978,6 +5137,9 @@ function renderAccount(page) {
           : '等待你在浏览器中完成授权…';
       }
     });
+    // 先等设备码事件监听器注册完成，再发登录命令，避免事件在监听器就绪前发出而漏收
+    try { if (sub && sub.ready) await sub.ready; } catch (e) {}
+    const offDc = () => { if (sub && sub.off) sub.off(); };
 
     dcOpen.onclick = () => {
       // 走启动器内置浏览器（persist:cmbrowser 分区），登录态能留住，也不用切到系统浏览器。
@@ -4999,6 +5161,8 @@ function renderAccount(page) {
       renderAccount(page);
     } catch (e) {
       offDc();
+      // 失败也要把面板显示出来（含明确原因 + 操作提示），别让用户干等
+      dcPanel.style.display = 'block';
       toast(e.message, true);
       btn.disabled = false;
       btn.textContent = '⊞ 获取登录验证码';
@@ -7119,6 +7283,19 @@ function renderSettings(page) {
       <div id="mem-recommend-tip" class="mem-tip" style="display:none"></div>
     </div>
 
+    <div class="glass" style="padding:22px;margin-bottom:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:16px">语言 / Language</div>
+      <div class="field">
+        <label>界面语言</label>
+        <select class="input" id="set-lang">
+          <option value="auto">跟随系统</option>
+          <option value="zh-CN">简体中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="hint-text">切换后立即生效；当前语言将保存到配置。</div>
+    </div>
+
     <div class="glass" style="padding:22px">
       <div class="page-title" style="font-size:17px;margin-bottom:16px">下载</div>
       <div class="field">
@@ -7475,6 +7652,16 @@ function renderSettings(page) {
 
   $('set-mirror').value = c.mirror;
   $('set-mirror').onchange = () => applyAndSave({ mirror: $('set-mirror').value });
+  $('set-lang').value = c.language || 'auto';
+  $('set-lang').onchange = () => {
+    const v = $('set-lang').value;
+    applyAndSave({ language: v });
+    window.i18n.setLang(v);
+    location.reload();
+  };
+  // 设置页下拉换自定义弹出列表（滚动条可见 + 滚轮可滚）
+  enhanceSelect($('set-mirror'));
+  enhanceSelect($('set-lang'));
   $('set-snapshots').onchange = () => applyAndSave({ showSnapshots: $('set-snapshots').checked });
   $('set-boost').onchange = () => applyAndSave({ speedBoost: $('set-boost').checked });
 
@@ -7961,6 +8148,15 @@ function bindGlobalEvents() {
   });
   api.onGameStarted(() => {
     state.busy = true;
+    // 游玩记录：累计启动 +1（空壳修复：playLog 之前从无写入，统计永远是 0）
+    try {
+      const pl = { ...(state.config.playLog || {}) };
+      const k = state.selectedInstance || 'default';
+      const e = pl[k] || { total: 0 };
+      pl[k] = { ...e, total: (e.total || 0) + 1, lastStart: Date.now() };
+      state.config.playLog = pl;
+      api.configSet('playLog', pl).catch(() => {});
+    } catch (e) { /* 记录失败不影响启动 */ }
     if (state.currentPage === 'home') {
       const btn = $('home-play');
       if (btn) {
@@ -7973,6 +8169,14 @@ function bindGlobalEvents() {
   });
   api.onGameExit((code) => {
     state.busy = false;
+    // 记录最近游玩时间
+    try {
+      const pl = { ...(state.config.playLog || {}) };
+      const k = state.selectedInstance || 'default';
+      pl[k] = { ...(pl[k] || {}), lastPlayed: Date.now() };
+      state.config.playLog = pl;
+      api.configSet('playLog', pl).catch(() => {});
+    } catch (e) { /* 忽略 */ }
     if (state.currentPage === 'home') {
       const btn = $('home-play');
       if (btn) { btn.disabled = false; btn.innerHTML = '<span class="play-ico"></span>立即启动'; }

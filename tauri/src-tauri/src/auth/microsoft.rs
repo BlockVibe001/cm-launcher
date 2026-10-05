@@ -21,7 +21,13 @@ async fn post_form(url: &str, params: &[(&str, String)]) -> CmdResult<Value> {
     for (k, v) in params {
         form.insert(*k, v.clone());
     }
-    let res = HTTP.post(url).form(&form).send().await.map_err(|e| AppError::Msg(e.to_string()))?;
+    // 加总超时：国内网络到 microsoftonline.com 不稳定，卡住会让用户以为“不给验证码”。
+    // 12 秒内连不上就直接报错并给出操作提示。
+    let fut = HTTP.post(url).form(&form).send();
+    let res = tokio::time::timeout(Duration::from_secs(12), fut)
+        .await
+        .map_err(|_| AppError::Msg("连接微软服务器超时：请检查网络，或开启代理/加速器后重试".into()))?
+        .map_err(|e| AppError::Msg(format!("连接微软服务器失败：{e}")))?;
     let status = res.status().as_u16();
     let data: Value = res.json().await.unwrap_or(json!({}));
     if status < 200 || status >= 300 {
@@ -40,13 +46,15 @@ async fn post_form(url: &str, params: &[(&str, String)]) -> CmdResult<Value> {
 }
 
 async fn post_json(url: &str, body: Value) -> CmdResult<Value> {
-    let res = HTTP
+    let fut = HTTP
         .post(url)
         .header("Content-Type", "application/json")
         .json(&body)
-        .send()
+        .send();
+    let res = tokio::time::timeout(Duration::from_secs(12), fut)
         .await
-        .map_err(|e| AppError::Msg(e.to_string()))?;
+        .map_err(|_| AppError::Msg("连接微软服务器超时：请检查网络，或开启代理/加速器后重试".into()))?
+        .map_err(|e| AppError::Msg(format!("连接微软服务器失败：{e}")))?;
     let status = res.status().as_u16();
     let data: Value = res.json().await.unwrap_or(json!({}));
     if status < 200 || status >= 300 {

@@ -2,15 +2,40 @@
 #![recursion_limit = "256"]
 
 mod auth;
+mod browser;
 mod config;
 mod error;
 mod events;
 mod logger;
 mod mc;
+mod memory;
+mod migrate;
 mod multiplayer;
 mod net;
+mod shell;
+mod ai;
+mod dnd;
+mod downloads;
+mod lab;
+mod modupdate;
+mod mrpack;
+mod packexport;
+mod skin;
 mod state;
 mod updater;
+
+// ============ 功能补齐（feat_*.rs 独立模块，各子代理自持） ============
+mod feat_backup;
+mod feat_crash;
+mod feat_onboard;
+mod feat_perf;
+mod feat_search;
+mod feat_server;
+mod feat_share;
+mod feat_skin;
+mod home;
+mod feat_theme;
+mod feat_update;
 
 use error::{AppError, CmdResult};
 use serde_json::{json, Map, Value};
@@ -560,6 +585,9 @@ fn main() {
         }))
         .manage(state::AppState::new())
         .manage(multiplayer::MpState::new())
+        .manage(downloads::DownloadsState::new())
+        .manage(lab::LabState::new())
+        .manage(feat_server::ServerState::new())
         .setup(|app| {
             if let Ok(dir) = app.path().resource_dir() {
                 multiplayer::lan::set_resource_root(dir);
@@ -657,6 +685,103 @@ fn main() {
             easytier_host,
             easytier_join,
             easytier_leave,
+            // ---- 账号（auth/commands.rs 已实现，此前未接线） ----
+            auth::commands::auth_offline,
+            auth::commands::auth_microsoft,
+            auth::commands::auth_yggdrasil,
+            auth::commands::auth_logout,
+            auth::commands::auth_switch,
+            auth::commands::auth_remove,
+            // ---- 内存管理（memory.rs 已实现，此前未接线） ----
+            memory::memory_info,
+            memory::memory_recommend,
+            memory::memory_clean,
+            // ---- 内置浏览器（browser.rs 已实现，此前未接线） ----
+            browser::browser_open,
+            browser::browser_info,
+            // ---- 搬家迁移（migrate.rs 已实现，此前未接线） ----
+            migrate::detect,
+            migrate::detect_in,
+            migrate::run,
+            migrate::change_game_dir,
+            // ---- 种子地图（mc/seedmap.rs，移植自 Electron 版 seedmap.js） ----
+            mc::seedmap::lab_slime,
+            mc::seedmap::lab_seed_from_save,
+            mc::seedmap::lab_chunkbase,
+            mc::seedmap::lab_seed_tile,
+            mc::seedmap::lab_seed_structs,
+            mc::seedmap::lab_seed_strongholds,
+            mc::seedmap::lab_seed_spawn,
+            mc::seedmap::lab_seed_slime,
+            mc::seedmap::lab_seed_biome,
+            // ---- 外部打开（shell.rs） ----
+            shell::shell_open,
+            shell::shell_open_path,
+            shell::shell_open_game_dir,
+            shell::shell_open_mods_dir,
+            shell::shell_open_config_dir,
+            shell::shell_open_saves_dir,
+            // ---- 全球化模块（皮肤 / 下载队列 / AI / 拖拽导入 / 导出 / 模组更新 / 整合包 / 实验室）----
+            skin::skin_official,
+            skin::skin_download,
+            skin::skin_read_local,
+            skin::skin_local_list,
+            skin::skin_local_delete,
+            skin::skin_upload_official,
+            skin::skin_upload_yggdrasil,
+            skin::skin_library,
+            skin::skin_current,
+            skin::skin_use,
+            skin::skin_history,
+            downloads::downloads_list,
+            downloads::downloads_add,
+            downloads::downloads_cancel,
+            downloads::downloads_retry,
+            downloads::downloads_remove,
+            downloads::downloads_clear,
+            downloads::downloads_open_dir,
+            ai::ai_providers,
+            ai::ai_test,
+            ai::ai_translate,
+            dnd::dnd_inspect,
+            dnd::dnd_import,
+            dnd::world_install_url,
+            packexport::instances_export,
+            modupdate::mods_check_updates,
+            modupdate::mods_resolve,
+            modupdate::mods_versions,
+            modupdate::mods_install_version,
+            mrpack::installpack,
+            lab::lab_recipe_export,
+            lab::lab_schematic_open,
+            lab::lab_schematic_replace,
+            lab::lab_schematic_export,
+            lab::lab_translate_jar,
+            // ============ 功能补齐（feat_*.rs，命令名契约固定，勿改名） ============
+            feat_crash::crash_list,
+            feat_crash::crash_analyze,
+            feat_share::share_encode,
+            feat_share::share_decode,
+            feat_share::share_import,
+            feat_skin::hd_skin_import,
+            feat_skin::hd_skin_list,
+            feat_skin::hd_skin_delete,
+            feat_skin::hd_skin_apply,
+            feat_skin::hd_cape_apply,
+            feat_update::pack_status,
+            feat_update::pack_apply,
+            feat_server::server_setup,
+            feat_server::server_start,
+            feat_server::server_stop,
+            feat_server::server_status,
+            feat_server::server_input,
+            feat_backup::backup_create,
+            feat_backup::backup_list,
+            feat_backup::backup_restore,
+            feat_backup::backup_delete,
+            // ============ 首页信息（空壳补齐） ============
+            home::home_news,
+            home::home_play_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

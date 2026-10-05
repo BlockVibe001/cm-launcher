@@ -8,5 +8,6 @@ pub mod modloader;
 pub mod mods;
 pub mod rules;
 pub mod search;
+pub mod seedmap;
 pub mod version;
 pub mod world;
