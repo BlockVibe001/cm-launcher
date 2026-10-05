@@ -2693,7 +2693,114 @@ async function finalizeNewInstance(versionId, loader, loaderVersion, gameDir) {
  * 一起下载到实例的 mods 目录。已在本地存在的前置文件会自动跳过。
  */
 async function openModVersionPicker(m, inst) {
-  const gv = mcVerOf(inst.versionId);
+  // 第一步：选择 MC 版本
+  const mcVersion = await pickMcVersion(m.name);
+  if (!mcVersion) return;
+
+  // 第二步：选择目标实例（该 MC 版本下的所有实例）
+  const targetInst = await pickTargetInstance(mcVersion, inst);
+  if (!targetInst) return;
+
+  // 第三步：选择模组版本
+  await pickModVersion(m, mcVersion, targetInst);
+}
+
+/** 选择 MC 版本 */
+function pickMcVersion(modName) {
+  return new Promise((resolve) => {
+    const instances = state.config.instances || {};
+    const allMcVersions = [...new Set(Object.values(instances).map(i => mcVerOf(i.versionId)).filter(Boolean))].sort();
+    
+    const mask = ce('div', 'modal-mask');
+    mask.innerHTML = `
+      <div class="modal">
+        <div class="modal-title">下载 ${escapeHtml(modName)}</div>
+        <div class="hint-text" style="margin-bottom:16px">选择 Minecraft 版本</div>
+        <div class="field">
+          <div id="mcv-list" style="max-height:300px;overflow:auto"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="mcv-cancel">取消</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    mask.querySelector('#mcv-cancel').onclick = () => { close(); resolve(null); };
+    mask.onclick = (e) => { if (e.target === mask) { close(); resolve(null); } };
+
+    const listEl = mask.querySelector('#mcv-list');
+    listEl.innerHTML = allMcVersions.map((v, i) => `
+      <label class="glass" style="display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer">
+        <input type="radio" name="mcv" value="${v}" ${i === 0 ? 'checked' : ''}>
+        <span style="font-size:16px;font-weight:600">${v}</span>
+      </label>
+    `).join('');
+
+    listEl.querySelectorAll('input[name="mcv"]').forEach((r) => {
+      r.onchange = () => { close(); resolve(r.value); };
+    });
+  });
+}
+
+/** 选择目标实例 */
+function pickTargetInstance(mcVersion, defaultInst) {
+  return new Promise((resolve) => {
+    const instances = state.config.instances || {};
+    const candidates = Object.entries(instances)
+      .filter(([_, i]) => mcVerOf(i.versionId) === mcVersion)
+      .map(([id, i]) => ({ id, ...i }));
+
+    if (candidates.length === 0) {
+      toast(`没有找到 ${mcVersion} 版本的实例`, true);
+      resolve(null);
+      return;
+    }
+
+    // 只有一个实例时直接选中
+    if (candidates.length === 1) {
+      resolve(candidates[0]);
+      return;
+    }
+
+    const mask = ce('div', 'modal-mask');
+    mask.innerHTML = `
+      <div class="modal">
+        <div class="modal-title">选择目标实例</div>
+        <div class="hint-text" style="margin-bottom:16px">Minecraft ${mcVersion}</div>
+        <div class="field">
+          <div id="inst-list" style="max-height:300px;overflow:auto"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="inst-cancel">取消</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    mask.querySelector('#inst-cancel').onclick = () => { close(); resolve(null); };
+    mask.onclick = (e) => { if (e.target === mask) { close(); resolve(null); } };
+
+    const listEl = mask.querySelector('#inst-list');
+    listEl.innerHTML = candidates.map((c, i) => `
+      <label class="glass" style="display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer">
+        <input type="radio" name="inst" value="${i}" ${c.id === defaultInst?.id ? 'checked' : ''}>
+        <span style="flex:1">
+          <div style="font-weight:600">${escapeHtml(c.name)}</div>
+          <div style="color:var(--text-dim);font-size:13px">${c.versionId} · ${loaderName(c.modLoader)}</div>
+        </span>
+      </label>
+    `).join('');
+
+    listEl.querySelectorAll('input[name="inst"]').forEach((r) => {
+      r.onchange = () => { close(); resolve(candidates[Number(r.value)]); };
+    });
+  });
+}
+
+/** 选择模组版本 */
+async function pickModVersion(m, mcVersion, inst) {
+  const gv = mcVersion;
   const gl = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
   const gdir = instGameDir(inst);
 
@@ -2703,7 +2810,7 @@ async function openModVersionPicker(m, inst) {
       <div class="modal-title">下载 ${escapeHtml(m.name)}</div>
       <div class="hint-text" id="mvp-hint">正在获取版本列表…</div>
       <div class="field">
-        <label>选择版本</label>
+        <label>选择模组版本</label>
         <div id="mvp-versions" style="max-height:260px;overflow:auto"></div>
       </div>
       <div class="field" id="mvp-deps-field" style="display:none">
@@ -2727,15 +2834,14 @@ async function openModVersionPicker(m, inst) {
   const depsEl = mask.querySelector('#mvp-deps');
   const okBtn = mask.querySelector('#mvp-ok');
 
-  // 版本列表：优先当前实例的 MC 版本+加载器，一条都没有时退到全部版本
   let vers = [];
   try {
     vers = await api.mrVersions(m.id, gv, gl);
     if (vers.length === 0) {
       vers = await api.mrVersions(m.id, '', '');
-      hintEl.textContent = `该模组没有匹配 ${inst.versionId || '当前实例'} 的版本，以下显示全部版本（注意兼容性）。`;
+      hintEl.textContent = `该模组没有匹配 ${mcVersion} 的版本，以下显示全部版本（注意兼容性）。`;
     } else {
-      hintEl.textContent = `已按当前实例（${inst.versionId} · ${loaderName(inst.modLoader)}）过滤，默认选中最新匹配版。`;
+      hintEl.textContent = `已按 ${mcVersion} · ${loaderName(inst.modLoader)} 过滤，默认选中最新匹配版。`;
     }
   } catch (e) {
     hintEl.textContent = '获取版本列表失败：' + e.message;
@@ -2743,7 +2849,6 @@ async function openModVersionPicker(m, inst) {
   }
   if (vers.length === 0) { hintEl.textContent = '该模组还没有发布任何版本。'; return; }
 
-  // 前置项目名缓存，避免同一弹窗里重复请求
   const projCache = new Map();
   const projectName = async (pid) => {
     if (!projCache.has(pid)) {
@@ -2791,7 +2896,6 @@ async function openModVersionPicker(m, inst) {
       showLoading(`下载 ${m.name}…`);
       await api.mrDownload(file, gdir, 'mod');
 
-      // 必装前置：解析到同 MC 版本+加载器的最新文件，mods 里已有同名文件就跳过
       const required = (picked.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id);
       const depNotes = [];
       if (required.length > 0) {
