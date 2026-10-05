@@ -2554,6 +2554,7 @@ select.input option { background: #121826; color: var(--text); }
 }
 
 /* ---------- 12. 滚动条 ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.13);
   border: 2px solid transparent;
@@ -2561,6 +2562,21 @@ select.input option { background: #121826; color: var(--text); }
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 下拉选择器选项滚动条 */
+select.input { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+select.input::-webkit-scrollbar { width: 6px; }
+select.input::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; border: none; }
+select.input::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+/* 模态框内列表滚动条（版本选择器等） */
+.modal [style*="overflow:auto"]::-webkit-scrollbar,
+.modal .scrollable::-webkit-scrollbar { width: 6px; }
+.modal [style*="overflow:auto"]::-webkit-scrollbar-thumb,
+.modal .scrollable::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; border: none; }
+.modal [style*="overflow:auto"]::-webkit-scrollbar-thumb:hover,
+.modal .scrollable::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 /* ---------- 13. 降低动效偏好 ---------- */
 @media (prefers-reduced-motion: reduce) {
