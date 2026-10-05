@@ -2693,130 +2693,56 @@ async function finalizeNewInstance(versionId, loader, loaderVersion, gameDir) {
  * 一起下载到实例的 mods 目录。已在本地存在的前置文件会自动跳过。
  */
 async function openModVersionPicker(m, inst) {
-  // 第一步：选择 MC 版本
-  const mcVersion = await pickMcVersion(m.name);
-  if (!mcVersion) return;
-
-  // 第二步：选择目标实例（该 MC 版本下的所有实例）
-  const targetInst = await pickTargetInstance(mcVersion, inst);
-  if (!targetInst) return;
-
-  // 第三步：选择模组版本
-  await pickModVersion(m, mcVersion, targetInst);
-}
-
-/** 选择 MC 版本 */
-function pickMcVersion(modName) {
-  return new Promise((resolve) => {
-    const instances = state.config.instances || {};
-    const allMcVersions = [...new Set(Object.values(instances).map(i => mcVerOf(i.versionId)).filter(Boolean))].sort();
-    
-    const mask = ce('div', 'modal-mask');
-    mask.innerHTML = `
-      <div class="modal">
-        <div class="modal-title">下载 ${escapeHtml(modName)}</div>
-        <div class="hint-text" style="margin-bottom:16px">选择 Minecraft 版本</div>
-        <div class="field">
-          <div id="mcv-list" style="max-height:300px;overflow:auto"></div>
-        </div>
-        <div class="modal-actions">
-          <button class="btn ghost" id="mcv-cancel">取消</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(mask);
-    const close = () => mask.remove();
-    mask.querySelector('#mcv-cancel').onclick = () => { close(); resolve(null); };
-    mask.onclick = (e) => { if (e.target === mask) { close(); resolve(null); } };
-
-    const listEl = mask.querySelector('#mcv-list');
-    listEl.innerHTML = allMcVersions.map((v, i) => `
-      <label class="glass" style="display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer">
-        <input type="radio" name="mcv" value="${v}" ${i === 0 ? 'checked' : ''}>
-        <span style="font-size:16px;font-weight:600">${v}</span>
-      </label>
-    `).join('');
-
-    listEl.querySelectorAll('input[name="mcv"]').forEach((r) => {
-      r.onchange = () => { close(); resolve(r.value); };
-    });
-  });
-}
-
-/** 选择目标实例 */
-function pickTargetInstance(mcVersion, defaultInst) {
-  return new Promise((resolve) => {
-    const instances = state.config.instances || {};
-    const candidates = Object.entries(instances)
-      .filter(([_, i]) => mcVerOf(i.versionId) === mcVersion)
-      .map(([id, i]) => ({ id, ...i }));
-
-    if (candidates.length === 0) {
-      toast(`没有找到 ${mcVersion} 版本的实例`, true);
-      resolve(null);
-      return;
-    }
-
-    // 只有一个实例时直接选中
-    if (candidates.length === 1) {
-      resolve(candidates[0]);
-      return;
-    }
-
-    const mask = ce('div', 'modal-mask');
-    mask.innerHTML = `
-      <div class="modal">
-        <div class="modal-title">选择目标实例</div>
-        <div class="hint-text" style="margin-bottom:16px">Minecraft ${mcVersion}</div>
-        <div class="field">
-          <div id="inst-list" style="max-height:300px;overflow:auto"></div>
-        </div>
-        <div class="modal-actions">
-          <button class="btn ghost" id="inst-cancel">取消</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(mask);
-    const close = () => mask.remove();
-    mask.querySelector('#inst-cancel').onclick = () => { close(); resolve(null); };
-    mask.onclick = (e) => { if (e.target === mask) { close(); resolve(null); } };
-
-    const listEl = mask.querySelector('#inst-list');
-    listEl.innerHTML = candidates.map((c, i) => `
-      <label class="glass" style="display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer">
-        <input type="radio" name="inst" value="${i}" ${c.id === defaultInst?.id ? 'checked' : ''}>
-        <span style="flex:1">
-          <div style="font-weight:600">${escapeHtml(c.name)}</div>
-          <div style="color:var(--text-dim);font-size:13px">${c.versionId} · ${loaderName(c.modLoader)}</div>
-        </span>
-      </label>
-    `).join('');
-
-    listEl.querySelectorAll('input[name="inst"]').forEach((r) => {
-      r.onchange = () => { close(); resolve(candidates[Number(r.value)]); };
-    });
-  });
-}
-
-/** 选择模组版本 */
-async function pickModVersion(m, mcVersion, inst) {
-  const gv = mcVersion;
+  const gv = mcVerOf(inst.versionId);
   const gl = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
   const gdir = instGameDir(inst);
+
+  // 获取所有可用版本（不限 MC 版本/加载器）
+  let allVers = [];
+  try {
+    allVers = await api.mrVersions(m.id, '', '');
+  } catch (e) {
+    toast('获取版本列表失败：' + e.message, true);
+    return;
+  }
+  if (allVers.length === 0) { toast('该模组还没有发布任何版本', true); return; }
+
+  // 提取所有可选的 MC 版本和加载器
+  const allMcVersions = [...new Set(allVers.flatMap(v => v.gameVersions || []))].sort().reverse();
+  const allLoaders = [...new Set(allVers.flatMap(v => v.loaders || []))].filter(Boolean);
 
   const mask = ce('div', 'modal-mask');
   mask.innerHTML = `
     <div class="modal wide">
       <div class="modal-title">下载 ${escapeHtml(m.name)}</div>
-      <div class="hint-text" id="mvp-hint">正在获取版本列表…</div>
+      <div class="hint-text" id="mvp-hint">选择模组加载器和 MC 版本</div>
+
+      <div class="field" style="display:flex;gap:12px;margin-bottom:14px">
+        <div style="flex:1">
+          <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">加载器</label>
+          <select class="input" id="mvp-loader" style="width:100%">
+            ${allLoaders.map(l => `<option value="${l}" ${l === gl ? 'selected' : ''}>${loaderName(l)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="flex:1">
+          <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">MC 版本</label>
+          <select class="input" id="mvp-mcver" style="width:100%">
+            <option value="">全部版本</option>
+            ${allMcVersions.map(v => `<option value="${v}" ${v === gv ? 'selected' : ''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
       <div class="field">
         <label>选择模组版本</label>
-        <div id="mvp-versions" style="max-height:260px;overflow:auto"></div>
+        <div id="mvp-versions" style="max-height:240px;overflow:auto"></div>
       </div>
+
       <div class="field" id="mvp-deps-field" style="display:none">
         <label>前置模组检测</label>
         <div id="mvp-deps" style="font-size:13px"></div>
       </div>
+
       <div class="modal-actions">
         <button class="btn ghost" id="mvp-cancel">取消</button>
         <button class="btn primary" id="mvp-ok" disabled>下载</button>
@@ -2833,21 +2759,8 @@ async function pickModVersion(m, mcVersion, inst) {
   const depsField = mask.querySelector('#mvp-deps-field');
   const depsEl = mask.querySelector('#mvp-deps');
   const okBtn = mask.querySelector('#mvp-ok');
-
-  let vers = [];
-  try {
-    vers = await api.mrVersions(m.id, gv, gl);
-    if (vers.length === 0) {
-      vers = await api.mrVersions(m.id, '', '');
-      hintEl.textContent = `该模组没有匹配 ${mcVersion} 的版本，以下显示全部版本（注意兼容性）。`;
-    } else {
-      hintEl.textContent = `已按 ${mcVersion} · ${loaderName(inst.modLoader)} 过滤，默认选中最新匹配版。`;
-    }
-  } catch (e) {
-    hintEl.textContent = '获取版本列表失败：' + e.message;
-    return;
-  }
-  if (vers.length === 0) { hintEl.textContent = '该模组还没有发布任何版本。'; return; }
+  const loaderSel = mask.querySelector('#mvp-loader');
+  const mcVerSel = mask.querySelector('#mvp-mcver');
 
   const projCache = new Map();
   const projectName = async (pid) => {
@@ -2857,8 +2770,10 @@ async function pickModVersion(m, mcVersion, inst) {
     return projCache.get(pid);
   };
 
-  let picked = vers[0];
+  let picked = null;
+
   const renderDeps = async (v) => {
+    if (!v) { depsField.style.display = 'none'; return; }
     const required = (v.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id);
     const optional = (v.dependencies || []).filter((d) => d.dependency_type === 'optional' && d.project_id);
     if (required.length === 0 && optional.length === 0) {
@@ -2873,22 +2788,50 @@ async function pickModVersion(m, mcVersion, inst) {
     depsEl.innerHTML = rows.join('');
   };
 
-  listEl.innerHTML = vers.map((v, i) => `
-    <label class="glass" style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;cursor:pointer">
-      <input type="radio" name="mvp-v" value="${i}" ${i === 0 ? 'checked' : ''}>
-      <span style="flex:1">
-        <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span></div>
-        <div style="color:var(--text-dim);font-size:12px">${v.gameVersions.join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
-      </span>
-    </label>
-  `).join('');
-  listEl.querySelectorAll('input[name="mvp-v"]').forEach((r) => {
-    r.onchange = () => { picked = vers[Number(r.value)]; renderDeps(picked); };
-  });
-  okBtn.disabled = false;
-  renderDeps(picked);
+  const renderVersions = () => {
+    const selLoader = loaderSel.value;
+    const selMcVer = mcVerSel.value;
+
+    // 按选择过滤版本
+    let filtered = allVers.filter(v => {
+      if (selLoader && !(v.loaders || []).includes(selLoader)) return false;
+      if (selMcVer && !(v.gameVersions || []).includes(selMcVer)) return false;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      hintEl.textContent = '没有匹配所选条件的版本';
+      listEl.innerHTML = '<div class="empty-tip">试试其他加载器或版本组合</div>';
+      okBtn.disabled = true;
+      return;
+    }
+
+    hintEl.textContent = `共 ${filtered.length} 个版本，默认选中最新版`;
+    picked = filtered[0];
+
+    listEl.innerHTML = filtered.map((v, i) => `
+      <label class="glass" style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="mvp-v" value="${i}" ${i === 0 ? 'checked' : ''}>
+        <span style="flex:1">
+          <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span></div>
+          <div style="color:var(--text-dim);font-size:12px">${v.gameVersions.join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
+        </span>
+      </label>
+    `).join('');
+
+    listEl.querySelectorAll('input[name="mvp-v"]').forEach((r) => {
+      r.onchange = () => { picked = filtered[Number(r.value)]; renderDeps(picked); };
+    });
+    okBtn.disabled = false;
+    renderDeps(picked);
+  };
+
+  loaderSel.onchange = renderVersions;
+  mcVerSel.onchange = renderVersions;
+  renderVersions();
 
   okBtn.onclick = async () => {
+    if (!picked) return;
     const file = picked.files.find((f) => f.primary) || picked.files[0];
     if (!file) { toast('该版本没有可下载的文件', true); return; }
     okBtn.disabled = true;
