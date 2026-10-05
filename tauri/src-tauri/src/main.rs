@@ -271,6 +271,48 @@ fn update_open(url: String) -> CmdResult<()> {
     updater::open_page(&url)
 }
 
+// ================= 资源中心搜索（Modrinth / CurseForge） =================
+
+#[tauri::command(rename = "search:modrinth")]
+async fn search_modrinth(query: String, mc_version: String, mod_loader: String, project_type: String) -> CmdResult<Value> {
+    mc::search::modrinth_search(&query, &mc_version, &mod_loader, &project_type).await
+}
+
+#[tauri::command(rename = "search:modrinth:versions")]
+async fn search_modrinth_versions(project_id: String, mc_version: String, mod_loader: String) -> CmdResult<Value> {
+    mc::search::modrinth_versions(&project_id, &mc_version, &mod_loader).await
+}
+
+#[tauri::command(rename = "search:modrinth:project")]
+async fn search_modrinth_project(project_id: String) -> CmdResult<Value> {
+    mc::search::modrinth_project(&project_id).await
+}
+
+#[tauri::command(rename = "search:modrinth:download")]
+async fn search_modrinth_download(file: Value, game_dir: String, project_type: String) -> CmdResult<String> {
+    mc::search::modrinth_download(&file, &game_dir, &project_type).await
+}
+
+#[tauri::command(rename = "search:curseforge")]
+async fn search_curseforge(query: String, mc_version: String, mod_loader: String, cls: String) -> CmdResult<Value> {
+    mc::search::curseforge_search(&query, &mc_version, &mod_loader, &cls).await
+}
+
+#[tauri::command(rename = "search:curseforge:files")]
+async fn search_curseforge_files(mod_id: String, mc_version: String) -> CmdResult<Value> {
+    mc::search::curseforge_files(&mod_id, &mc_version).await
+}
+
+#[tauri::command(rename = "search:curseforge:download")]
+async fn search_curseforge_download(file: Value, game_dir: String) -> CmdResult<String> {
+    mc::search::curseforge_download(&file, &game_dir).await
+}
+
+#[tauri::command(rename = "search:curseforge:world")]
+async fn search_curseforge_world(file: Value, game_dir: String) -> CmdResult<String> {
+    mc::search::curseforge_install_world(&file, &game_dir).await
+}
+
 // ================= 实例内容（模组 / 资源包 / 光影 / 存档 / 截图 / 日志） =================
 
 #[tauri::command(rename = "mods:list")]
@@ -565,6 +607,14 @@ fn main() {
             update_download,
             update_install,
             update_open,
+            search_modrinth,
+            search_modrinth_versions,
+            search_modrinth_project,
+            search_modrinth_download,
+            search_curseforge,
+            search_curseforge_files,
+            search_curseforge_download,
+            search_curseforge_world,
             mods_list,
             mods_enable,
             mods_delete,

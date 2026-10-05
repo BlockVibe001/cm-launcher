@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "cm-launcher"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "chrono",
  "encoding_rs",
@@ -543,6 +543,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha1",
  "sha2",
  "sysinfo",

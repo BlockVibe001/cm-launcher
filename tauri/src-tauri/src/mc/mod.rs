@@ -7,5 +7,6 @@ pub mod launch;
 pub mod modloader;
 pub mod mods;
 pub mod rules;
+pub mod search;
 pub mod version;
 pub mod world;

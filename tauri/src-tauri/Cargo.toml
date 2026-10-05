@@ -13,6 +13,7 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+serde_urlencoded = "0.7"
 encoding_rs = "0.8"
 thiserror = "2"
 chrono = "0.4"
