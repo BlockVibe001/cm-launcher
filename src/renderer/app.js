@@ -108,6 +108,61 @@ function enhanceSelect(sel) {
   return sel;
 }
 
+/* ---------- MC 版本号比较（下拉/列表排序用） ----------
+ * 字符串 sort() 会把 "1.9" 排在 "1.20.4" 前面、快照 "24w14a" 排在正式版前面，
+ * 版本选择列表因此乱序。这里分段解析 + 类型分级，得到真正的“新 → 旧”降序。
+ */
+function parseMcVer(s) {
+  s = String(s || '').trim();
+  // 快照：24w14a / 24w14b
+  let m = s.match(/^(\d{2})w(\d{1,2})([ab])?$/i);
+  if (m) return { type: 1, nums: [+m[1], +m[2], m[3] ? (m[3].toLowerCase() === 'a' ? 0 : 1) : 0] };
+  // 正式 / 预发布：1.20.4、1.20.4-pre2、1.20.4-rc1
+  m = s.match(/^(\d+)\.(\d+)(?:\.(\d+))?(?:-(pre|rc)(\d+))?$/);
+  if (m) return { type: 2, nums: [+m[1], +m[2], m[3] ? +m[3] : 0, m[4] ? (m[4] === 'pre' ? 0 : 1) : 2, m[5] ? +m[5] : 0] };
+  // 远古：a1.0.0 / b1.7.3 / c0.0.1
+  m = s.match(/^([abc])?(\d+)\.(\d+)(?:\.(\d+))?$/i);
+  if (m) return { type: 0, nums: [m[1] ? (m[1].toLowerCase() === 'c' ? 0 : m[1].toLowerCase() === 'b' ? 1 : 2) : 3, +m[2], +m[3], m[4] ? +m[4] : 0] };
+  return { type: -1, raw: s };
+}
+function mcVersionCmp(a, b) {
+  const pa = parseMcVer(a), pb = parseMcVer(b);
+  if (pa.type !== pb.type) return pb.type - pa.type; // 正式(2) > 快照(1) > 远古(0) > 未知(-1)
+  if (pa.type === -1) return String(b).localeCompare(String(a)); // 未知回退字典序
+  const na = pa.nums, nb = pb.nums;
+  for (let i = 0; i < Math.max(na.length, nb.length); i++) {
+    const x = i < na.length ? na[i] : 0, y = i < nb.length ? nb[i] : 0;
+    if (x !== y) return y - x; // 降序：新在前
+  }
+  return 0;
+}
+const sortMcVersions = (arr) => [...new Set(arr)].sort(mcVersionCmp);
+
+/**
+ * 主版本前缀兼容评分（星云 mcVersionScore 移植）：判断候选 MC 版本与实例版本是否兼容。
+ * 1.21.4 ↔ 1.21.x 互认（主版本前缀相同），精确相等最优，跨主版本不兼容。
+ * 用于模组 / 依赖版本选择：同加载器下按兼容分排序，优先选与实例兼容的最新版，
+ * 避免精确匹配失败时落到任意版本（装错 MC 版本）。
+ */
+function mcVersionScore(instMc, candMc) {
+  if (!instMc || !candMc) return 0;
+  if (instMc === candMc) return 100;
+  const mainOf = (v) => String(v).split('.').slice(0, 2).join('.');
+  return mainOf(instMc) === mainOf(candMc) ? 50 : 0;
+}
+/** 一个模组版本与实例版本的兼容分：取其声明的所有 MC 版本里的最高分 */
+function bestMcVersionScore(v, instMc) {
+  const gvs = (v.gameVersions || []).filter(Boolean);
+  if (!gvs.length) return 0;
+  return Math.max(...gvs.map((g) => mcVersionScore(instMc, g)));
+}
+/** 一个 CurseForge 文件与实例版本的兼容分（CF 文件同样带 gameVersions 数组） */
+function bestFileScore(f, instMc) {
+  const gvs = (f.gameVersions || []).filter(Boolean);
+  if (!gvs.length) return 0;
+  return Math.max(...gvs.map((g) => mcVersionScore(instMc, g)));
+}
+
 const state = {
   config: null,
   manifest: null,
@@ -116,6 +171,8 @@ const state = {
   account: null,
   selectedInstance: null,
   busy: false,
+  // 正在运行的实例 id 集合（多开支持，事件驱动维护）
+  runningInst: new Set(),
 };
 
 const ACCENTS = [
@@ -1000,7 +1057,7 @@ function renderInstances(page) {
   $('batch-delete').onclick = async () => {
     const ids = [...sel];
     if (!ids.length) return toast('请先选择要删除的实例', true);
-    const ok = window.confirm(`确定删除这 ${ids.length} 个实例吗？\n（只移除实例记录，不会删除游戏文件）`);
+    const ok = window.confirm(`确定删除这 ${ids.length} 个实例吗？\n将同时删除它们的实例目录（含游戏文件），且不可恢复。`);
     if (!ok) return;
     for (const id of ids) await api.instancesDelete(id);
     sel.clear();
@@ -1028,6 +1085,7 @@ function instCard(it, sel) {
       <button class="btn sm primary" data-act="launch">启动</button>
       <button class="btn sm" data-act="detail">详情</button>
       <button class="btn sm" data-act="folder">目录</button>
+      <button class="btn sm" data-act="copy">⧉ 复制</button>
       <button class="btn sm ghost" data-act="rename">重命名</button>
       <button class="btn sm danger" data-act="delete">删除</button>
     </div>
@@ -1066,8 +1124,15 @@ function instCard(it, sel) {
         await api.instancesSave(it.id, { ...it, id: undefined, name });
         await refreshConfig();
         renderPage('instances');
+      } else if (act === 'copy') {
+        try {
+          const copy = await api.instancesCopy(it.id);
+          await refreshConfig();
+          toast(`已复制为「${copy.name}」`);
+          renderPage('instances');
+        } catch (err) { toast('复制失败：' + err.message, true); }
       } else if (act === 'delete') {
-        if (!window.confirm(`删除实例「${it.name}」？\n（只移除实例记录，不会删除游戏文件）`)) return;
+        if (!window.confirm(`删除实例「${it.name}」？\n将同时删除该实例目录（含游戏文件），且不可恢复。`)) return;
         await api.instancesDelete(it.id);
         await refreshConfig();
         renderPage('instances');
@@ -1081,23 +1146,146 @@ function instCard(it, sel) {
 async function createInstance(page) {
   const name = await askText('新建实例', '', '例如：1.20.1 生存专用');
   if (!name) return;
-  const id = `inst_${Date.now().toString(36)}`;
-  const baseDir = state.config.gameDir;
-  await api.instancesSave(id, {
-    name,
-    versionId: '',
-    gameDir: `${baseDir}/instances/${id}`,
-    modLoader: 'vanilla',
-    loaderVersion: '',
-    javaPath: '',
-    memory: null,
-    jvmArgs: '',
-    icon: '⛏',
-    group: '',
+
+  // 保证版本清单与已装版本就绪（首屏不再等 manifest，这里补齐）
+  if (!state.manifest) {
+    try { state.manifest = await api.versionsManifest(false); } catch (_) {}
+  }
+  if (!state.installed) {
+    state.installed = await api.versionsInstalled(state.config.gameDir).catch(() => []);
+  }
+
+  const gameDir = state.config.gameDir;
+  const sel = await askCreateInstanceConfig(name);
+  if (!sel) return;
+
+  // 走与「版本管理 → 下载并新建实例」完全相同的下载链：
+  // 下载成功才建实例（finalizeNewInstance），失败不留空壳/残实例 —— 星云"实例创建=真能玩"的修复。
+  try {
+    showLoading('准备下载…');
+    const versionId = await downloadVersionWithLoader(
+      { mcVersion: sel.mcVersion, loader: sel.loader, loaderVersion: sel.loaderVersion },
+      gameDir,
+      (t) => { if ($('loading-text')) $('loading-text').textContent = t; },
+    );
+    hideLoading();
+    state.installed = await api.versionsInstalled(gameDir);
+    await finalizeNewInstance(versionId, sel.loader, sel.loaderVersion, gameDir);
+  } catch (e) {
+    hideLoading();
+    toast('下载失败：' + e.message, true);
+  }
+}
+
+/** 新建实例弹窗：选游戏版本 + Mod 加载器（Forge 可再选具体版本，Fabric/Quilt 自动取稳定最新） */
+function askCreateInstanceConfig(name) {
+  return new Promise((resolve) => {
+    const mask = ce('div', 'modal-mask');
+    const versions = (state.manifest ? state.manifest.versions : []) || [];
+    const release = versions.filter((v) => v.type === 'release');
+    const other = versions.filter((v) => v.type !== 'release');
+    const ordered = [...release, ...other];
+    const vOpts = ordered.map((v) =>
+      `<option value="${v.id}">${v.id}${state.installed && state.installed.includes(v.id) ? '（已安装）' : ''}</option>`
+    ).join('') || '<option value="">版本列表不可用</option>';
+
+    mask.innerHTML = `
+      <div class="modal wide">
+        <div class="modal-title">新建实例「${escapeHtml(name)}」</div>
+        <div class="field">
+          <label>游戏版本</label>
+          <select class="input" id="civ-version">${vOpts}</select>
+        </div>
+        <div class="field">
+          <label>Mod 加载器</label>
+          <select class="input" id="civ-loader">
+            <option value="vanilla">原版（无 Mod 支持）</option>
+            <option value="fabric">Fabric</option>
+            <option value="quilt">Quilt</option>
+            <option value="forge">Forge</option>
+          </select>
+        </div>
+        <div id="civ-loader-cfg"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="civ-cancel">取消</button>
+          <button class="btn primary" id="civ-ok">下载并创建</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+
+    let forgeSel = null;
+    let forgeLoadFailed = false;
+    let loaderGen = 0;   // 竞态守卫：切换加载器/版本时丢弃过期异步结果
+    const renderLoaderCfg = async () => {
+      const gen = ++loaderGen;
+      const box = $('civ-loader-cfg');
+      if (!box) return;
+      const loader = $('civ-loader').value;
+      const mcVersion = $('civ-version').value;
+      box.innerHTML = '';
+      forgeSel = null;
+      forgeLoadFailed = false;
+      if (loader !== 'forge') {
+        box.innerHTML = `<div class="hint-text" style="margin-top:6px">${loader === 'vanilla' ? '原版 Minecraft，无 Mod 支持' : `${loaderName(loader)} 将自动安装稳定最新版`}</div>`;
+        return;
+      }
+      box.innerHTML = '<div class="hint-text" style="margin-top:6px">加载 Forge 版本…</div>';
+      try {
+        const list = await api.forgeVersions(mcVersion);
+        if (gen !== loaderGen || !box.isConnected) return;   // 已切换，丢弃过期结果
+        const rec = list.find((v) => v.isRecommended) || list[0];
+        box.innerHTML = `
+          <div class="field">
+            <label>Forge 版本</label>
+            <select class="input" id="civ-forge">${list.map((v) =>
+              `<option value="${v.version}"${rec && v.version === rec.version ? ' selected' : ''}>${v.version}${v.isRecommended ? '（推荐）' : v.isLatest ? '（最新）' : ''}</option>`
+            ).join('')}</select>
+          </div>
+        `;
+        forgeSel = $('civ-forge');
+      } catch (e) {
+        if (gen !== loaderGen || !box.isConnected) return;
+        forgeLoadFailed = true;
+        box.innerHTML = `<div class="hint-text" style="color:#fca5a5;margin-top:6px">Forge 版本加载失败：${e.message}（请检查网络，或换一个游戏版本再试）</div>`;
+      }
+    };
+    $('civ-loader').onchange = renderLoaderCfg;
+    $('civ-version').onchange = renderLoaderCfg;
+    renderLoaderCfg();
+
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      mask.remove();
+      resolve(v);
+    };
+    mask.querySelector('#civ-cancel').onclick = () => finish(null);
+    mask.onclick = (e) => { if (e.target === mask) finish(null); };
+
+    mask.querySelector('#civ-ok').onclick = async () => {
+      const mcVersion = $('civ-version').value;
+      const loader = $('civ-loader').value;
+      if (!mcVersion) return toast('先选一个游戏版本', true);
+      let loaderVersion = '';
+      if (loader === 'forge') {
+        if (forgeSel && forgeSel.value) loaderVersion = forgeSel.value;
+        else if (forgeLoadFailed) return toast('Forge 版本加载失败：请检查网络后重新打开这个窗口再试', true);
+        else return toast('Forge 版本还没加载完，稍等一下', true);
+      } else if (loader === 'fabric' || loader === 'quilt') {
+        try {
+          const list = loader === 'fabric' ? await api.fabricLoaders() : await api.quiltLoaders();
+          const stable = list.find((v) => v.stable) || list[0];
+          if (!stable) return toast(`${loaderName(loader)} 版本列表为空`, true);
+          loaderVersion = stable.version;
+        } catch (e) {
+          return toast(`${loaderName(loader)} 版本获取失败：${e.message}`, true);
+        }
+      }
+      finish({ mcVersion, loader, loaderVersion });
+    };
   });
-  await refreshConfig();
-  toast(`实例「${name}」已创建，去版本管理选个版本吧`);
-  openInstance(id);
 }
 
 async function doExport(id) {
@@ -1845,7 +2033,7 @@ async function loadInstanceSettings(inst, gameDir, body) {
   };
   $('is-export').onclick = () => doExport(state.currentInstanceId);
   $('is-delete').onclick = async () => {
-    if (!window.confirm(`删除实例「${inst.name}」？\n（只移除实例记录，不会删除游戏文件）`)) return;
+    if (!window.confirm(`删除实例「${inst.name}」？\n将同时删除该实例目录（含游戏文件），且不可恢复。`)) return;
     await api.instancesDelete(state.currentInstanceId);
     await refreshConfig();
     renderPage('instances');
@@ -1980,6 +2168,7 @@ function renderHome(page) {
     }
     onPlay();
   };
+  paintPlayBtn();
   $('home-cancel').onclick = () => {
     api.cancel();
     hideHomeProgress();
@@ -2667,6 +2856,16 @@ function getGreeting() {
   return '晚上好';
 }
 
+/* 首页启动按钮统一刷新：准备中 / 运行中（按选中实例）/ 可启动 */
+function paintPlayBtn() {
+  const btn = $('home-play');
+  if (!btn) return;
+  if (state.busy) { btn.disabled = true; btn.textContent = '准备中…'; return; }
+  if (state.runningInst.has(state.selectedInstance)) { btn.disabled = true; btn.textContent = '🎮 游戏运行中…'; return; }
+  btn.disabled = false;
+  btn.innerHTML = '<span class="play-ico"></span>立即启动';
+}
+
 function onPlay(extra) {
   if (state.busy) return;
   if (!state.account) {
@@ -2682,8 +2881,7 @@ function onPlay(extra) {
   }
   showHomeProgress('准备中…', 0);
   state.busy = true;
-  $('home-play').disabled = true;
-  $('home-play').textContent = '准备中…';
+  paintPlayBtn();
 
   const launchOpts = { ...(extra || {}) };
   const serverInput = $('hero-server');
@@ -2693,12 +2891,13 @@ function onPlay(extra) {
   }
 
   api.launch(state.selectedInstance, Object.keys(launchOpts).length ? launchOpts : null).then(() => {
-    // 已启动
+    // 准备/下载阶段结束：释放 busy（运行期交给 runningInst 按实例判定，支持多开）
+    state.busy = false;
+    paintPlayBtn();
   }).catch((e) => {
     hideHomeProgress();
     state.busy = false;
-    $('home-play').disabled = false;
-    $('home-play').innerHTML = '<span class="play-ico"></span>立即启动';
+    paintPlayBtn();
     if (!/已取消/.test(e.message)) toast(e.message, true);
   });
 }
@@ -2809,7 +3008,7 @@ async function finalizeNewInstance(versionId, loader, loaderVersion, gameDir) {
  * 最新一版），实时检测所选版本的前置模组（必装依赖），确认后连同前置
  * 一起下载到实例的 mods 目录。已在本地存在的前置文件会自动跳过。
  */
-async function openModVersionPicker(m, inst) {
+async function openModVersionPicker(m, inst, cat = 'mod') {
   const gv = mcVerOf(inst.versionId);
   const gl = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
   const gdir = instGameDir(inst);
@@ -2913,6 +3112,10 @@ async function openModVersionPicker(m, inst) {
       return true;
     });
 
+    // 主版本前缀兼容排序：与当前实例兼容的版本排最前（同兼容分保持网络返回的新→旧顺序）。
+    // 星云 mcVersionScore 移植：1.21.4 实例能优先选到 1.21.x 版本，而不是落到任意版本。
+    filtered.sort((a, b) => bestMcVersionScore(b, gv) - bestMcVersionScore(a, gv));
+
     if (filtered.length === 0) {
       hintEl.textContent = dlOnly ? '还没有下载过该模组的版本' : '没有匹配所选条件的版本';
       listEl.innerHTML = '<div class="empty-tip">' + (dlOnly ? '取消勾选「只看已下载版本」查看全部' : '试试其他加载器或版本组合') + '</div>';
@@ -2929,7 +3132,7 @@ async function openModVersionPicker(m, inst) {
         <span style="flex:1">
           <div>${escapeHtml(v.versionNumber)} <span style="color:var(--text-dim);font-size:12px">${escapeHtml(v.name || '')}</span>
             ${(v.files || []).some((f) => localModFiles.has(f.filename)) ? '<span class="badge" style="margin-left:6px">已下载</span>' : ''}</div>
-          <div style="color:var(--text-dim);font-size:12px">${v.gameVersions.join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
+          <div style="color:var(--text-dim);font-size:12px">${(v.gameVersions || []).join(' / ')} · ${(v.loaders || []).map(loaderName).join(' / ')}</div>
         </span>
       </label>
     `).join('');
@@ -2958,12 +3161,15 @@ async function openModVersionPicker(m, inst) {
       return;
     }
     if (allVers.length === 0) { toast('该模组还没有发布任何版本', true); close(); return; }
-    // 提取所有可选的 MC 版本和加载器
-    const allMcVersions = [...new Set(allVers.flatMap(v => v.gameVersions || []))].sort().reverse();
+    // 提取所有可选的 MC 版本和加载器（版本号按真正的“新→旧”排序，字符串 sort 会排错）
+    const allMcVersions = sortMcVersions(allVers.flatMap((v) => v.gameVersions || []));
     const allLoaders = [...new Set(allVers.flatMap(v => v.loaders || []))].filter(Boolean);
     loaderSel.innerHTML = allLoaders.map(l => `<option value="${l}" ${l === gl ? 'selected' : ''}>${loaderName(l)}</option>`).join('');
+    // 默认选中：实例版本精确匹配优先；否则选与 gv 主版本兼容的最高版本；否则「全部版本」
+    const defaultMc = allMcVersions.includes(gv) ? gv
+      : (allMcVersions.find((v) => mcVersionScore(gv, v) > 0) || '');
     mcVerSel.innerHTML = '<option value="">全部版本</option>' +
-      allMcVersions.map(v => `<option value="${v}" ${v === gv ? 'selected' : ''}>${v}</option>`).join('');
+      allMcVersions.map(v => `<option value="${v}" ${v === defaultMc ? 'selected' : ''}>${v}</option>`).join('');
     renderVersions();
   })();
 
@@ -2974,7 +3180,7 @@ async function openModVersionPicker(m, inst) {
     okBtn.disabled = true;
     try {
       showLoading(`下载 ${m.name}…`);
-      await api.mrDownload(file, gdir, 'mod');
+      await api.mrDownload(file, gdir, cat);
 
       const required = (picked.dependencies || []).filter((d) => d.dependency_type === 'required' && d.project_id);
       const depNotes = [];
@@ -2983,7 +3189,9 @@ async function openModVersionPicker(m, inst) {
         for (const d of required) {
           const name = await projectName(d.project_id);
           try {
-            const dvers = await api.mrVersions(d.project_id, gv, gl);
+            const dvers = (await api.mrVersions(d.project_id, gv, gl))
+              .slice()
+              .sort((a, b) => bestMcVersionScore(b, gv) - bestMcVersionScore(a, gv));
             const dv = dvers[0];
             const dfile = dv && (dv.files.find((f) => f.primary) || dv.files[0]);
             if (!dfile) { depNotes.push(`${name}（无匹配版本，需手动安装）`); continue; }
@@ -2997,6 +3205,117 @@ async function openModVersionPicker(m, inst) {
       }
       close();
       toast(depNotes.length > 0 ? `${m.name} 下载成功。前置：${depNotes.join('、')}` : `${m.name} 下载成功`);
+    } catch (e) {
+      toast(e.message, true);
+      okBtn.disabled = false;
+    } finally {
+      hideLoading();
+    }
+  };
+}
+
+/**
+ * CurseForge 文件选择弹窗：CF 源没有版本/依赖元数据，但下载前先选 MC 版本 + 具体文件，
+ * 不再点一下就直接下最新版（统一修复：所有模组下载入口都有二级菜单）。
+ */
+function openCfVersionPicker(m, inst) {
+  const gv = mcVerOf(inst.versionId);
+  const gdir = instGameDir(inst);
+  if (window.closeAllEsel) window.closeAllEsel();
+
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal wide">
+      <div class="modal-title">下载 ${escapeHtml(m.name)}</div>
+      <div class="hint-text" id="cfp-hint">正在获取文件列表…</div>
+      <div class="field">
+        <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">MC 版本</label>
+        <select class="input" id="cfp-mcver"></select>
+      </div>
+      <div class="field">
+        <label style="font-size:13px;color:var(--text-dim);margin-bottom:6px;display:block">选择文件</label>
+        <div id="cfp-files" style="max-height:240px;overflow:auto"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cfp-cancel">取消</button>
+        <button class="btn primary" id="cfp-ok" disabled>下载</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('#cfp-cancel').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  const hintEl = mask.querySelector('#cfp-hint');
+  const listEl = mask.querySelector('#cfp-files');
+  const okBtn = mask.querySelector('#cfp-ok');
+  const mcVerSel = mask.querySelector('#cfp-mcver');
+  enhanceSelect(mcVerSel);   // MC 版本下拉换自定义弹出列表
+
+  let allFiles = [];
+  let picked = null;
+  const RT = { 1: ['正式', '#4ade80'], 2: ['测试', '#fbbf24'], 3: ['Alpha', '#f87171'] };
+
+  const renderFiles = () => {
+    const selMc = mcVerSel.value;
+    let filtered = allFiles.filter((f) => !selMc || (f.gameVersions || []).includes(selMc));
+    if (filtered.length === 0) {
+      hintEl.textContent = '没有匹配所选条件的文件';
+      listEl.innerHTML = '<div class="empty-tip">试试其他 MC 版本</div>';
+      okBtn.disabled = true;
+      return;
+    }
+    hintEl.textContent = `共 ${filtered.length} 个文件，默认选中与实例最兼容的最新版`;
+    picked = filtered[0];
+    listEl.innerHTML = filtered.map((f, i) => {
+      const rt = RT[f.releaseType] || ['未知', 'var(--text-dim)'];
+      const size = f.size ? ` · ${(f.size / 1048576).toFixed(1)} MB` : '';
+      return `
+        <label class="glass" style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:6px;cursor:pointer">
+          <input type="radio" name="cfp-f" value="${i}" ${i === 0 ? 'checked' : ''}>
+          <span style="flex:1">
+            <div>${escapeHtml(f.displayName || f.name)} <span style="color:${rt[1]};font-size:12px">${rt[0]}</span>${size}</div>
+            <div style="color:var(--text-dim);font-size:12px">${(f.gameVersions || []).join(' / ') || '任意版本'}</div>
+          </span>
+        </label>
+      `;
+    }).join('');
+    listEl.querySelectorAll('input[name="cfp-f"]').forEach((r) => {
+      r.onchange = () => { picked = filtered[Number(r.value)]; };
+    });
+    okBtn.disabled = false;
+  };
+
+  (async () => {
+    try {
+      allFiles = await api.cfFiles(m.id, '');
+    } catch (e) {
+      toast('获取文件列表失败：' + e.message, true);
+      close();
+      return;
+    }
+    if (allFiles.length === 0) { toast('该模组还没有可下载的文件', true); close(); return; }
+    const allMc = sortMcVersions(allFiles.flatMap((f) => f.gameVersions || []));
+    const defaultMc = allMc.includes(gv) ? gv
+      : (allMc.find((v) => mcVersionScore(gv, v) > 0) || '');
+    mcVerSel.innerHTML = '<option value="">全部版本</option>' +
+      allMc.map(v => `<option value="${v}" ${v === defaultMc ? 'selected' : ''}>${v}</option>`).join('');
+    // 兼容排序：与实例版本兼容的文件排最前（同分保持 CF id 新→旧）
+    allFiles.sort((a, b) => bestFileScore(b, gv) - bestFileScore(a, gv));
+    renderFiles();
+  })();
+
+  mcVerSel.onchange = renderFiles;
+
+  okBtn.onclick = async () => {
+    if (!picked) return;
+    okBtn.disabled = true;
+    try {
+      showLoading(`下载 ${m.name}…`);
+      await api.cfDownload(picked, gdir);
+      close();
+      toast(`${m.name} 下载成功`);
     } catch (e) {
       toast(e.message, true);
       okBtn.disabled = false;
@@ -3655,6 +3974,20 @@ function renderModCategory(inst, box) {
 
   const renderOnline = (source) => {
     const mbox = $('mod-content');
+    // CurseForge 没配 Key 时直接给引导，不发起必失败的网络请求
+    if (source === 'curseforge' && !String(state.config.apiKey || '').trim()) {
+      mbox.innerHTML = `
+        <div class="glass" style="padding:24px;text-align:center">
+          <div style="font-size:32px;margin-bottom:10px">🔑</div>
+          <div style="font-weight:600;margin-bottom:6px">CurseForge 需要 API Key</div>
+          <div style="color:var(--text-dim);font-size:13px;margin-bottom:16px">官方接口强制校验 Key。去 console.curseforge.com 免费申请一个，填到 设置 → 网络与下载，即可启用 CF 内容。<br>不填也不影响其他功能，Modrinth 分类照常可用。</div>
+          <button class="btn primary" id="cf-go-settings">去设置填写</button>
+        </div>
+      `;
+      const go = mbox.querySelector('#cf-go-settings');
+      if (go) go.onclick = () => renderPage('settings');
+      return;
+    }
     const mcVersion = mcVerOf(inst.versionId);
     const loader = inst.modLoader && inst.modLoader !== 'vanilla' ? inst.modLoader : 'fabric';
     mbox.innerHTML = `
@@ -3702,21 +4035,9 @@ function renderModCategory(inst, box) {
               openModVersionPicker(m, fresh);
               return;
             }
-            // CurseForge 源没有版本/依赖元数据，保持旧的直取最新逻辑
-            const gv = mcVerOf(fresh.versionId);
-            const gdir = instGameDir(fresh);
-            try {
-              const files = await api.cfFiles(m.id, gv);
-              const file = files.find((f) => f.releaseType === 1) || files[0];
-              if (!file) throw new Error('没有可用的文件版本');
-              showLoading(`下载 ${m.name}…`);
-              await api.cfDownload(file, gdir);
-              toast(`${m.name} 下载成功`);
-            } catch (e) {
-              toast(e.message, true);
-            } finally {
-              hideLoading();
-            }
+            // CurseForge 源没有版本/依赖元数据：弹文件选择菜单（选 MC 版本 + 具体文件），
+            // 不再点一下就直接下最新版 —— 与 Modrinth 源保持同等的二级菜单体验
+            openCfVersionPicker(m, fresh);
           };
           container.appendChild(card);
         });
@@ -3810,20 +4131,8 @@ function renderResourceCategory(inst, box, cat) {
           // 下载前置：光影 / 资源包要实例先选好版本才下得准；数据包是按存档放的，不强求
           const fresh = cat === 'datapack' ? inst : await ensureRuntime(inst, 'vanilla');
           if (!fresh) return;
-          const gv = mcVerOf(fresh.versionId) || mcVersion;
-          try {
-            const vers = await api.mrVersions(m.id, gv, '');
-            const v = vers[0];
-            const file = v.files.find((f) => f.primary) || v.files[0];
-            if (!file) throw new Error('没有可用的文件版本');
-            showLoading(`下载 ${m.name}…`);
-            await api.mrDownload(file, instGameDir(fresh), cat);
-            toast(`${m.name} 下载成功`);
-          } catch (e) {
-            toast(e.message, true);
-          } finally {
-            hideLoading();
-          }
+          // 统一走二级菜单：选 MC 版本 / 加载器 / 具体版本后再下载（光影、资源包、数据包同款）
+          openModVersionPicker(m, fresh, cat);
         };
         card.querySelector('[data-act="web"]').onclick = () =>
           api.openUrl(`https://modrinth.com/${cat}/${m.slug}`);
@@ -5958,7 +6267,7 @@ function renderGradientTool(box) {
       <div class="section-title">渐变文字生成器</div>
       <div class="field">
         <label>文字内容</label>
-        <input class="input" id="gt-text" value="BlockVibe 我的世界启动器">
+        <input class="input" id="gt-text" value="CM Minecraft Launcher">
       </div>
       <div class="grid-2">
         <div class="field"><label>起始颜色</label><input type="color" class="input" id="gt-c1" value="#22c55e"></div>
@@ -7398,16 +7707,26 @@ function renderSettings(page) {
     </div>
 
     <div class="glass" style="padding:22px;margin-top:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:6px">网络与下载</div>
+      <div class="page-sub" style="margin-bottom:14px">资源中心数据源配置。CurseForge 官方接口强制要求 API Key（官网免费申请），不填时 CF 分类会提示改用 Modrinth，其余功能不受影响</div>
+      <div class="field">
+        <label>CurseForge API Key</label>
+        <input class="input" id="cf-key" type="password" placeholder="留空则 CurseForge 不可用（推荐只用 Modrinth）">
+        <div class="hint-text">Key 只保存在本机 config.json，不会上传。申请地址：console.curseforge.com → API Keys</div>
+      </div>
+    </div>
+
+    <div class="glass" style="padding:22px;margin-top:18px">
       <div class="page-title" style="font-size:17px;margin-bottom:6px">实验功能</div>
       <div class="page-sub" style="margin-bottom:14px">可能还在打磨的玩法，默认关闭，随时可以撤回</div>
       <div class="field">
         <label class="ui-check">
           <input type="checkbox" id="set-island" ${c.islandEnabled ? 'checked' : ''}>
-          <span>通知浮岛 · 顶部居中弹出通知</span>
+          <span>灵动通知 · 顶部居中弹出通知</span>
         </label>
         <div class="hint-text" style="margin-top:6px">打开后，下载完成、游戏启动 / 退出、更新等消息会从屏幕顶部正中以液态玻璃胶囊弹出、展开、再收起，点击可提前关掉。名字与造型都是我们自己的，不含任何第三方商标素材。</div>
         <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
-          <button class="btn" id="btn-island-test" type="button">试弹一条</button>
+          <button class="btn" id="btn-island-test" type="button">试一试</button>
           <span class="hint-text" id="island-test-hint"></span>
         </div>
       </div>
@@ -7756,7 +8075,7 @@ function renderSettings(page) {
       api.configSet('islandEnabled', true);
       state.config.islandEnabled = true;
     }
-    islandNotify({ ico: '🎉', title: '通知浮岛已就绪', desc: '以后下载完成的消息会从这里弹出来' });
+    islandNotify({ ico: '🎉', title: '灵动通知已就绪', desc: '以后下载完成的消息会从这里弹出来', center: true, hold: 3000 });
   };
 
   // ========== 更新 ==========
@@ -7836,6 +8155,16 @@ function renderSettings(page) {
   $('up-page').onclick = () => {
     if (pendingUpdate && pendingUpdate.page) api.updaterOpen(pendingUpdate.page);
   };
+
+  // CurseForge API Key：失焦/回车即时保存（仅本地 config.json）
+  const cfKeyInput = $('cf-key');
+  if (cfKeyInput) {
+    cfKeyInput.value = String(state.config.apiKey || '');
+    cfKeyInput.onchange = () => {
+      applyAndSave({ apiKey: cfKeyInput.value.trim() });
+      toast('CurseForge API Key 已保存');
+    };
+  }
 
   $('btn-save-settings').onclick = () => {
     const maxMem = parseInt($('set-maxmem').value) || 4096;
@@ -8146,41 +8475,36 @@ function bindGlobalEvents() {
   api.onModloaderProgress((p) => {
     if ($('loading-text')) $('loading-text').textContent = p.step || '';
   });
-  api.onGameStarted(() => {
-    state.busy = true;
+  api.onGameStarted((payload) => {
+    // 多开：运行期不再占用全局 busy（busy 只代表准备/下载阶段），按钮按实例判定
+    const instId = payload && payload.instanceId;
+    if (instId) state.runningInst.add(instId);
     // 游玩记录：累计启动 +1（空壳修复：playLog 之前从无写入，统计永远是 0）
     try {
       const pl = { ...(state.config.playLog || {}) };
-      const k = state.selectedInstance || 'default';
+      const k = instId || state.selectedInstance || 'default';
       const e = pl[k] || { total: 0 };
       pl[k] = { ...e, total: (e.total || 0) + 1, lastStart: Date.now() };
       state.config.playLog = pl;
       api.configSet('playLog', pl).catch(() => {});
     } catch (e) { /* 记录失败不影响启动 */ }
-    if (state.currentPage === 'home') {
-      const btn = $('home-play');
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = '🎮 游戏运行中…';
-      }
-    }
     hideHomeProgress();
+    paintPlayBtn();
     toast('游戏已启动', false, { ico: '🎮', desc: '祝你玩得开心', hold: 2800 });
   });
-  api.onGameExit((code) => {
-    state.busy = false;
+  api.onGameExit((payload) => {
+    const instId = payload && payload.instanceId;
+    const code = payload && payload.code;
+    if (instId) state.runningInst.delete(instId);
     // 记录最近游玩时间
     try {
       const pl = { ...(state.config.playLog || {}) };
-      const k = state.selectedInstance || 'default';
+      const k = instId || state.selectedInstance || 'default';
       pl[k] = { ...(pl[k] || {}), lastPlayed: Date.now() };
       state.config.playLog = pl;
       api.configSet('playLog', pl).catch(() => {});
     } catch (e) { /* 忽略 */ }
-    if (state.currentPage === 'home') {
-      const btn = $('home-play');
-      if (btn) { btn.disabled = false; btn.innerHTML = '<span class="play-ico"></span>立即启动'; }
-    }
+    paintPlayBtn();
     if (code && code !== 0) {
       toast(`游戏异常退出（代码 ${code}）`, true, { ico: '🏁', hold: 4200 });
     } else {
@@ -8733,13 +9057,15 @@ async function islandDrain() {
     desc.textContent = item.desc || '';
     desc.style.display = item.desc ? '' : 'none';
     pill.classList.toggle('err', !!item.err);
+    // 居中变体：islandNotify 传 center:true 时整条在屏幕正中间弹出（「试一试」用）
+    host.classList.toggle('center', !!item.center);
 
     host.hidden = false;
     void pill.offsetWidth;                       // 确保起始态先绘制，入场动画才跑得起来
     pill.classList.add('pop');                  // ① 小圆胶囊冒出来
     await islandWait(220);
     pill.classList.add('expanded');             // ② 横向展开露文字
-    await islandWait(item.hold || 3400);
+    await islandWait(item.hold || 3000);
 
     pill.classList.remove('expanded');          // 收起
     await islandWait(300);

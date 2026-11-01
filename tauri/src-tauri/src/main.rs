@@ -152,6 +152,11 @@ fn instances_delete(id: String) {
     mc::instance::delete_instance(&id)
 }
 
+#[tauri::command(rename = "instances:copy")]
+fn instances_copy(id: String) -> Value {
+    mc::instance::copy_instance(&id)
+}
+
 // ================= 游戏 =================
 
 // ================= ModLoader（Forge / NeoForge / Fabric / Quilt） =================
@@ -212,6 +217,11 @@ fn game_cancel(app: tauri::AppHandle) {
 #[tauri::command(rename = "game:running")]
 fn game_running(app: tauri::AppHandle) -> bool {
     app.state::<state::AppState>().game_running.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[tauri::command(rename = "game:runningList")]
+fn game_running_list(app: tauri::AppHandle) -> Vec<String> {
+    app.state::<state::AppState>().running_instances.lock().unwrap().clone()
 }
 
 // ================= 对话框（rfd） =================
@@ -615,6 +625,7 @@ fn main() {
             instances_list,
             instances_save,
             instances_delete,
+            instances_copy,
             forge_versions,
             forge_install,
             neoforge_versions,
@@ -626,6 +637,7 @@ fn main() {
             game_launch,
             game_cancel,
             game_running,
+            game_running_list,
             dialog_dir,
             pick_file,
             dialog_files,

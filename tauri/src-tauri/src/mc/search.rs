@@ -278,13 +278,18 @@ pub async fn curseforge_search(
         }
     }
     let qs = serde_urlencoded::to_string(&params).unwrap_or_default();
-    let resp = http()
-        .get(format!("{CF_API}/mods/search?{qs}"))
-        .send()
-        .await
-        .map_err(|e| AppError::Msg(e.to_string()))?;
+    let mut req = http().get(format!("{CF_API}/mods/search?{qs}"));
+    // CurseForge 官方 API 强制 X-Api-Key；没配 Key 时直接给出友好提示，不浪费一次 403
+    let key = config::get("apiKey").as_str().unwrap_or("").to_string();
+    if key.is_empty() {
+        return Err(AppError::Msg(
+            "未配置 CurseForge API Key：请在设置 → 网络与下载里填入后重试，或改用 Modrinth".into(),
+        ));
+    }
+    req = req.header("X-Api-Key", key);
+    let resp = req.send().await.map_err(|e| AppError::Msg(e.to_string()))?;
     if resp.status() == 403 {
-        return Err(AppError::Msg("CurseForge 接口需要 API Key（403），请改用 Modrinth".into()));
+        return Err(AppError::Msg("CurseForge API Key 无效或已被限流（403），请检查设置里的 Key，或改用 Modrinth".into()));
     }
     if !resp.status().is_success() {
         return Err(AppError::Msg(format!(
@@ -324,11 +329,16 @@ pub async fn curseforge_search(
 pub async fn curseforge_files(mod_id: &str, mc_version: &str) -> CmdResult<Value> {
     let params = [("gameVersion", mc_version)];
     let qs = serde_urlencoded::to_string(&params).unwrap_or_default();
-    let resp = http()
-        .get(format!("{CF_API}/mods/{mod_id}/files?{qs}"))
-        .send()
-        .await
-        .map_err(|e| AppError::Msg(e.to_string()))?;
+    let mut req = http().get(format!("{CF_API}/mods/{mod_id}/files?{qs}"));
+    let key = config::get("apiKey").as_str().unwrap_or("").to_string();
+    if key.is_empty() {
+        return Err(AppError::Msg("未配置 CurseForge API Key，无法获取文件列表".into()));
+    }
+    req = req.header("X-Api-Key", key);
+    let resp = req.send().await.map_err(|e| AppError::Msg(e.to_string()))?;
+    if resp.status() == 403 {
+        return Err(AppError::Msg("CurseForge API Key 无效或已被限流（403），请检查设置里的 Key".into()));
+    }
     if !resp.status().is_success() {
         return Err(AppError::Msg(format!(
             "获取文件列表失败 (HTTP {})",

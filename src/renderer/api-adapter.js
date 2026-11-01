@@ -110,6 +110,7 @@
     instancesList: () => call('instances:list'),
     instancesSave: (id, data) => call('instances:save', { id, data }),
     instancesDelete: (id) => call('instances:delete', { id }),
+    instancesCopy: (id) => call('instances:copy', { id }),
     instancesExport: (id) => call('instances:export', { id }),
 
     // 实例内容
@@ -305,7 +306,7 @@
     onLog: on('log'),
     onProgress: on('download:progress'),
     onModloaderProgress: on('modloader:progress'),
-    onGameStarted: (cb) => { listen('game:started', () => cb()); },
+    onGameStarted: (cb) => { listen('game:started', (e) => cb(e.payload)); },
     onGameExit: (cb) => { listen('game:exit', (e) => cb(e.payload)); },
     onDeviceCode: (cb) => {
       let un = null;

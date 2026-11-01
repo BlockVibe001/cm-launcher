@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CM Minecraft Launcher",
+  "productName": "星云启动器",
   "version": "1.3.0",
   "identifier": "com.cm.blockvibe.launcher",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CM Minecraft Launcher",
+        "title": "星云启动器",
         "width": 1180,
         "height": 760,
         "minWidth": 960,

@@ -169,7 +169,7 @@ fn build_launch_args(vj: &Value, game_dir: &Path, account: &Value, opts: LaunchO
     let put = |m: &mut HashMap<String, String>, k: &str, v: String| m.insert(k.into(), v);
     put(&mut repl, "natives_directory", natives_dir.to_string_lossy().to_string());
     put(&mut repl, "launcher_name", "CM-Launcher".into());
-    put(&mut repl, "launcher_version", "1.0.0".into());
+    put(&mut repl, "launcher_version", env!("CARGO_PKG_VERSION").into());
     put(&mut repl, "classpath", classpath.clone());
     put(&mut repl, "classpath_separator", CP_SEP.into());
     put(&mut repl, "library_directory", libraries_dir.to_string_lossy().to_string());
@@ -282,18 +282,21 @@ fn detect_lan_port(line: &str) -> Option<i64> {
 
 /// 完整启动流程
 pub async fn launch(instance_id: &str, extra: Option<Value>, app: AppHandle) -> CmdResult<bool> {
-    // 运行中拒绝重复启动
-    let already = {
-        let state = app.state::<crate::state::AppState>();
-        state.game_running.load(Ordering::SeqCst)
-    };
-    if already {
-        return Err(AppError::Msg("游戏已经在运行中".into()));
-    }
-
     let instance = instance::get_instance(instance_id)
         .or_else(|| instance::get_instance(&config::get("selectedInstance").as_str().unwrap_or("")))
         .ok_or_else(|| AppError::Msg("实例不存在".into()))?;
+    // 多开：只拒绝同一个实例重复启动，不同实例可同时运行
+    let resolved_id = if instance_id.is_empty() {
+        config::get("selectedInstance").as_str().unwrap_or("").to_string()
+    } else {
+        instance_id.to_string()
+    };
+    {
+        let state = app.state::<crate::state::AppState>();
+        if state.running_instances.lock().unwrap().iter().any(|id| id == &resolved_id) {
+            return Err(AppError::Msg("该实例已经在运行中".into()));
+        }
+    }
     let inst_version = instance.get("versionId").and_then(Value::as_str).unwrap_or("");
     if inst_version.is_empty() {
         return Err(AppError::Msg("该实例未选择游戏版本".into()));
@@ -400,8 +403,13 @@ pub async fn launch(instance_id: &str, extra: Option<Value>, app: AppHandle) -> 
         }
     }
 
-    // 标记运行
-    app.state::<crate::state::AppState>().game_running.store(true, Ordering::SeqCst);
+    // 标记运行（多开：记入运行实例集合，供 game:runningList 与同实例互斥使用）
+    {
+        let st = app.state::<crate::state::AppState>();
+        st.game_running.store(true, Ordering::SeqCst);
+        st.running_instances.lock().unwrap().push(resolved_id.clone());
+    }
+    let rid_for_task = resolved_id.clone();
 
     // 输出读取 + 监督：任务拥有 child
     let stdout = child.stdout.take();
@@ -435,11 +443,16 @@ pub async fn launch(instance_id: &str, extra: Option<Value>, app: AppHandle) -> 
         let status = child.wait().await;
         let code = status.ok().and_then(|s| s.code()).map(|c| i64::from(c)).unwrap_or(-1);
         crate::logger::info(&format!("游戏已退出（退出码 {code}）"));
-        app_out.state::<crate::state::AppState>().game_running.store(false, Ordering::SeqCst);
-        let _ = app_out.emit(EV_GAME_EXIT, code);
+        {
+            let st = app_out.state::<crate::state::AppState>();
+            st.game_running.store(false, Ordering::SeqCst);
+            let mut insts = st.running_instances.lock().unwrap();
+            insts.retain(|id| id != &rid_for_task);
+        }
+        let _ = app_out.emit(EV_GAME_EXIT, json!({ "code": code, "instanceId": rid_for_task }));
     });
 
-    let _ = app.emit(EV_GAME_STARTED, ());
+    let _ = app.emit(EV_GAME_STARTED, json!({ "instanceId": resolved_id }));
     Ok(true)
 }
 
