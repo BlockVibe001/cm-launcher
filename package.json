@@ -1,14 +1,14 @@
 {
-  "name": "cm-minecraft-launcher",
+  "name": "nebula-launcher",
   "version": "2.0.0",
-  "description": "CM Minecraft Launcher - 离线/正版双登录",
+  "description": "星云启动器 - Nebula Launcher · 离线/正版双登录",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win"
   },
-  "author": "CM",
+  "author": "Nebula",
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.2.0",
@@ -19,8 +19,8 @@
   },
   "build": {
     "appId": "com.cm.blockvibe.launcher",
-    "productName": "CM Minecraft Launcher",
-    "copyright": "MIT License · CM",
+    "productName": "星云启动器",
+    "copyright": "MIT License · Nebula",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -58,11 +58,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "CM 启动器",
-      "artifactName": "CM-Launcher-${version}-setup.exe"
+      "shortcutName": "星云启动器",
+      "artifactName": "Nebula-Launcher-${version}-setup.exe"
     },
     "portable": {
-      "artifactName": "CM-Launcher-${version}-portable.exe"
+      "artifactName": "Nebula-Launcher-${version}-portable.exe"
     }
   }
 }

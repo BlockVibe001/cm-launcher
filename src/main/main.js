@@ -67,7 +67,7 @@ function createWindow() {
     backgroundColor: '#0a0a0c',
     transparent: false,
     frame: false,
-    title: 'CM Minecraft Launcher',
+    title: '星云启动器 - Nebula Launcher',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

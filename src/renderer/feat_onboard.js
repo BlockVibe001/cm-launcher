@@ -15,7 +15,7 @@
   /* ---------- 文案 ---------- */
   window.__DICT__ = window.__DICT__ || {};
   window.__DICT__['zh-CN'] = Object.assign(window.__DICT__['zh-CN'] || {}, {
-    'fx.onboard.welcome.title': '👋 欢迎使用 CM Minecraft Launcher',
+    'fx.onboard.welcome.title': '👋 欢迎使用星云启动器',
     'fx.onboard.welcome.body': '三步带你装好第一个版本，开始你的方块之旅。',
     'fx.onboard.step2.title': '📦 下载游戏版本',
     'fx.onboard.step2.body': '选一个 Mod 加载器（原版 / Fabric / Forge…）和游戏版本，即可创建你的第一个实例。',
@@ -32,7 +32,7 @@
     'fx.onboard.reopen': '🎓 重新打开新手引导',
   });
   window.__DICT__['en'] = Object.assign(window.__DICT__['en'] || {}, {
-    'fx.onboard.welcome.title': '👋 Welcome to CM Minecraft Launcher',
+    'fx.onboard.welcome.title': '👋 Welcome to Nebula Launcher',
     'fx.onboard.welcome.body': 'Set up your first version in three quick steps.',
     'fx.onboard.step2.title': '📦 Download a game version',
     'fx.onboard.step2.body': 'Pick a mod loader (Vanilla / Fabric / Forge…) and a game version to create your first instance.',

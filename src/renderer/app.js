@@ -226,7 +226,7 @@ async function init() {
     state.updateInfo = uv;
     const foot = $('foot-status');
     if (foot) {
-      foot.title = `CM Minecraft Launcher v${uv.version}${uv.portable ? '（免安装版）' : ''} · 点这里检查更新`;
+      foot.title = `星云启动器 Nebula Launcher v${uv.version}${uv.portable ? '（免安装版）' : ''} · 点这里检查更新`;
       foot.onclick = openUpdateSettings;
       const ver = $('foot-ver');
       if (ver) ver.textContent = `v${uv.version} · 运行正常`;
@@ -6325,7 +6325,7 @@ function renderGradientTool(box) {
       <div class="section-title">渐变文字生成器</div>
       <div class="field">
         <label>文字内容</label>
-        <input class="input" id="gt-text" value="CM Minecraft Launcher">
+        <input class="input" id="gt-text" value="星云启动器 Nebula Launcher">
       </div>
       <div class="grid-2">
         <div class="field"><label>起始颜色</label><input type="color" class="input" id="gt-c1" value="#22c55e"></div>
