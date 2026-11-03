@@ -3561,14 +3561,14 @@ body[data-wall="custom"] .bg-layer .bg-grid { display: none; }
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     0 12px 38px rgba(0, 0, 0, 0.5);
-  transform: translateY(-18px) scale(0.66);
+  transform: translateY(-80px) scale(0.66);
   opacity: 0;
   transition:
     transform 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.28),
     opacity 0.28s ease,
     max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* ① 小圆胶囊先弹出来 */
+/* ① 从顶部滑下来（苹果风灵动岛） */
 .island-pill.pop {
   transform: translateY(0) scale(1);
   opacity: 1;

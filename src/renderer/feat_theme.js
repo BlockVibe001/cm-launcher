@@ -112,7 +112,7 @@
       + '  from { filter: hue-rotate(0deg) saturate(1.1); }'
       + '  to   { filter: hue-rotate(45deg) saturate(1.35); }'
       + '}'
-      + 'body[data-mode="light"][data-secret="mint"], body[data-secret="mint"] {'
+      + 'body[data-secret="mint"] {'
       + '  --accent:#22c582; --accent-2:#129a63;'
       + '  --accent-glow:rgba(34,197,130,.30); --accent-soft:rgba(34,197,130,.15);'
       + '  --bg-0:#ecf6ee;'
@@ -122,7 +122,7 @@
       + '    radial-gradient(70% 60% at 18% 8%, rgba(120,230,180,.50), transparent 72%),'
       + '    linear-gradient(160deg,#f3fbf4 0%,#e3f2e9 100%) !important;'
       + '}'
-      + 'body[data-mode="light"][data-secret="sakura"], body[data-secret="sakura"] {'
+      + 'body[data-secret="sakura"] {'
       + '  --accent:#ff8fb8; --accent-2:#ef5f95;'
       + '  --accent-glow:rgba(255,143,184,.32); --accent-soft:rgba(255,143,184,.16);'
       + '  --bg-0:#fdf0f5;'
@@ -153,7 +153,7 @@
     var s = read();
     var cur = s.current;
     if (cur && THEMES[cur] && s.unlocked.indexOf(cur) >= 0) {
-      document.body.setAttribute('data-mode', THEMES[cur].base);
+      // 不再强制覆盖 data-mode：隐藏主题只改 accent/背景，深浅色由用户在设置里自己选
       document.body.setAttribute('data-secret', cur);
     } else {
       document.body.removeAttribute('data-secret');
@@ -221,32 +221,15 @@
         cur.current = (cur.current === id) ? '' : id; // 再点一次取消 → 回退官方主题
         write(cur);
         applyThemeWrapped();
-        // 同步选中态
+        // 同步选中态：隐藏主题按钮高亮切换；官方深浅色按钮保持原样（不取消）
         box.querySelectorAll('.fx-secret-btn').forEach(function (b) {
           b.classList.toggle('on', b.dataset.secret === cur.current);
-        });
-        box.querySelectorAll('.ui-opt:not(.fx-secret-btn)').forEach(function (b) {
-          b.classList.remove('on');
         });
       });
       box.appendChild(btn);
     });
 
-    // 点官方 4 主题 → 清除隐藏主题 current
-    box.querySelectorAll('.ui-opt:not(.fx-secret-btn)').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var cur = read();
-        if (cur.current) { cur.current = ''; write(cur); }
-        document.body.removeAttribute('data-secret');
-      });
-    });
-
-    // 渲染时同步选中态：隐藏主题激活时，官方按钮全部取消高亮
-    if (s.current) {
-      box.querySelectorAll('.ui-opt:not(.fx-secret-btn)').forEach(function (b) {
-        b.classList.remove('on');
-      });
-    }
+    // 点官方深浅色主题 → 不再清除隐藏主题 current（两者共存，互不冲突）
   }
 
   /* ---------- 生命周期钩子 ---------- */
