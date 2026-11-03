@@ -3843,7 +3843,7 @@ function renderVersions(page) {
   }
 }
 
-/* ========== 模组中心 ========== */
+/* ========== 资源中心 ========== */
 
 const CENTER_CATS = [
   { id: 'mod',          name: '模组',   ico: '🧩' },
@@ -3863,7 +3863,7 @@ function renderCenter(page) {
   // 没有实例时下载内容无处安放：先引导下载版本建实例
   if (!inst) {
     page.innerHTML = `
-      <div class="page-title">模组中心</div>
+      <div class="page-title">资源中心</div>
       <div class="glass" style="padding:36px;text-align:center">
         <div style="font-size:42px;margin-bottom:12px">🧩</div>
         <div style="font-size:15px;margin-bottom:6px">还没有任何实例</div>
@@ -3879,7 +3879,7 @@ function renderCenter(page) {
   }
 
   page.innerHTML = `
-    <div class="page-title">模组中心</div>
+    <div class="page-title">资源中心</div>
     <div class="page-sub">当前实例「${inst.name}」· 下载内容自动放入该实例对应目录
       <button class="btn ghost sm" id="center-import" type="button" style="margin-left:10px">📥 本地导入</button>
       <span class="hint-text" style="margin-left:8px">也可以直接把文件拖进窗口</span>
@@ -4190,26 +4190,9 @@ function renderModpackCategory(inst, box) {
             <button class="btn" data-act="web">网页</button>
           </div>
         `;
-        card.querySelector('[data-act="install"]').onclick = async () => {
-          const btn = card.querySelector('[data-act="install"]');
-          try {
-            const vers = await api.mrVersions(m.id, '', '');
-            const v = vers[0];
-            const file = v.files.find((f) => f.primary) || v.files[0];
-            if (!file) throw new Error('没有可用的整合包文件');
-            btn.disabled = true;
-            btn.textContent = '安装中…';
-            showLoading(`安装整合包：${m.name}`);
-            await api.mrInstallPack(file, state.config.gameDir);
-            state.config = await api.configGetAll();
-            toast(`整合包「${m.name}」安装成功，已添加为新实例`);
-          } catch (e) {
-            toast(e.message, true);
-            btn.disabled = false;
-            btn.textContent = '⚡ 安装';
-          } finally {
-            hideLoading();
-          }
+        card.querySelector('[data-act="install"]').onclick = () => {
+          // 不再点一下就直装最新版：先弹二级菜单让用户选 MC 版本 / 加载器
+          openModpackVersionPicker(m);
         };
         card.querySelector('[data-act="web"]').onclick = () =>
           api.openUrl(`https://modrinth.com/modpack/${m.slug}`);
@@ -4223,6 +4206,81 @@ function renderModpackCategory(inst, box) {
   $('mp-search-btn').onclick = doSearch;
   $('mp-search').onkeydown = (e) => { if (e.key === 'Enter') doSearch(); };
   doSearch();
+}
+
+/* ---------- 整合包版本选择二级菜单（选 MC 版本 / 加载器后再装） ---------- */
+async function openModpackVersionPicker(m) {
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal wide">
+      <div class="modal-title">安装 ${escapeHtml(m.name)}</div>
+      <div class="hint-text" id="mpv-hint">正在获取版本列表…</div>
+      <div id="mpv-list" style="max-height:320px;overflow:auto;margin-top:10px"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="mpv-cancel">取消</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('#mpv-cancel').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  const listEl = mask.querySelector('#mpv-list');
+  const hintEl = mask.querySelector('#mpv-hint');
+
+  let vers = [];
+  try {
+    vers = await api.mrVersions(m.id, '', '');
+  } catch (e) {
+    hintEl.textContent = '加载失败：' + e.message;
+    return;
+  }
+  if (!vers.length) {
+    hintEl.textContent = '该整合包暂无可安装版本';
+    return;
+  }
+  hintEl.textContent = `共 ${vers.length} 个版本，按发布时间从新到旧，选择要安装的版本：`;
+
+  vers.forEach((v) => {
+    const file = (v.files || []).find((f) => f.primary) || (v.files || [])[0];
+    if (!file) return;
+    const row = ce('div', 'mod-card glass');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin-bottom:8px';
+    const mcVers = (v.gameVersions || []).slice(0, 4).join(' / ');
+    const loaders = (v.loaders || []).join(' / ');
+    const date = (v.datePublished || '').slice(0, 10);
+    row.innerHTML = `
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;margin-bottom:4px">${escapeHtml(v.name || v.versionNumber || '未命名版本')}</div>
+        <div class="hint-text" style="font-size:12px">
+          ${mcVers ? `🎮 ${escapeHtml(mcVers)}` : ''}
+          ${loaders ? ` · 🔧 ${escapeHtml(loaders)}` : ''}
+          ${date ? ` · 📅 ${date}` : ''}
+        </div>
+      </div>
+      <button class="btn primary" type="button">安装此版本</button>
+    `;
+    row.querySelector('button').onclick = async () => {
+      const btn = row.querySelector('button');
+      btn.disabled = true;
+      btn.textContent = '安装中…';
+      try {
+        showLoading(`安装整合包：${m.name} (${v.versionNumber || v.name || ''})`);
+        await api.mrInstallPack(file, state.config.gameDir);
+        state.config = await api.configGetAll();
+        toast(`整合包「${m.name}」安装成功，已添加为新实例`);
+        close();
+      } catch (e) {
+        toast(e.message, true);
+        btn.disabled = false;
+        btn.textContent = '安装此版本';
+      } finally {
+        hideLoading();
+      }
+    };
+    listEl.appendChild(row);
+  });
 }
 
 /* ---------- 分类：世界（直链 / 拖入 → saves） ---------- */
