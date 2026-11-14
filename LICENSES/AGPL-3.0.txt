@@ -1,0 +1,7 @@
+GNU Affero General Public License v3.0
+
+完整许可证文本见 https://www.gnu.org/licenses/agpl-3.0.txt
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+适用组件：Terracotta 陶瓦联机（随安装包附带的二进制）
