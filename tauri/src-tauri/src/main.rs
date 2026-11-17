@@ -819,6 +819,9 @@ fn main() {
             feat_backup::backup_list,
             feat_backup::backup_restore,
             feat_backup::backup_delete,
+            feat_backup::autobackup_opts,
+            feat_backup::autobackup_save,
+            feat_backup::autobackup_run,
             // ============ 首页信息（空壳补齐） ============
             home::home_news,
             home::home_play_log,

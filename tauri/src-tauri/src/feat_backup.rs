@@ -8,6 +8,7 @@
 
 use crate::error::{AppError, CmdResult};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -267,4 +268,118 @@ pub fn backup_delete(game_dir: String, backup_file: String) -> CmdResult<Value> 
         Ok(()) => Ok(json!({ "ok": true })),
         Err(e) => Ok(fail(e)),
     }
+}
+
+/* ---------- 自动备份 ---------- */
+
+fn auto_opts() -> Value {
+    let mut opts = json!({
+        "enabled": false,
+        "intervalHours": 6,
+        "keep": 5,
+        "onExit": true,
+        "lastRunAt": 0,
+    });
+    if let (Value::Object(dst), Value::Object(src)) = (&mut opts, crate::config::get("autoBackup")) {
+        for (k, v) in src {
+            dst.insert(k, v);
+        }
+    }
+    opts
+}
+
+fn auto_game_dir() -> String {
+    let sel = crate::config::get("selectedInstance").as_str().unwrap_or("").to_string();
+    let insts = crate::config::get("instances");
+    insts
+        .get(&sel)
+        .and_then(|v| v.get("gameDir"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| crate::config::get("gameDir").as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// channel: autobackup:opts
+#[tauri::command(rename = "autobackup:opts")]
+pub fn autobackup_opts() -> CmdResult<Value> {
+    Ok(auto_opts())
+}
+
+/// channel: autobackup:save
+#[tauri::command(rename = "autobackup:save")]
+pub fn autobackup_save(patch: Value) -> CmdResult<Value> {
+    let mut opts = auto_opts();
+    if let (Value::Object(dst), Value::Object(src)) = (&mut opts, patch) {
+        for (k, v) in src {
+            dst.insert(k, v);
+        }
+    }
+    crate::config::set("autoBackup", opts.clone());
+    Ok(opts)
+}
+
+/// channel: autobackup:run
+#[tauri::command(rename = "autobackup:run")]
+pub fn autobackup_run() -> CmdResult<Value> {
+    let game_dir = auto_game_dir();
+    if game_dir.is_empty() {
+        return Ok(fail("没有游戏目录"));
+    }
+    let saves_root = PathBuf::from(&game_dir).join("saves");
+    let mut saves = Vec::new();
+    if let Ok(rd) = fs::read_dir(&saves_root) {
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.is_dir() && path.join("level.dat").is_file() {
+                saves.push(e.file_name().to_string_lossy().to_string());
+            }
+        }
+    }
+    if saves.is_empty() {
+        return Ok(fail("没有可备份的存档"));
+    }
+
+    let mut made = Vec::new();
+    for save in &saves {
+        if let Ok(v) = backup_create(game_dir.clone(), save.clone()) {
+            if v.get("ok").and_then(Value::as_bool) == Some(true) {
+                if let Some(file) = v.get("file").and_then(Value::as_str) {
+                    made.push(file.to_string());
+                }
+            }
+        }
+    }
+
+    let keep = std::cmp::max(1, auto_opts().get("keep").and_then(Value::as_u64).unwrap_or(5)) as usize;
+    let mut removed = 0usize;
+    if let Ok(v) = backup_list(game_dir.clone()) {
+        let mut groups: HashMap<String, Vec<Value>> = HashMap::new();
+        if let Some(items) = v.get("items").and_then(Value::as_array) {
+            for it in items {
+                if let Some(name) = it.get("saveName").and_then(Value::as_str) {
+                    groups.entry(name.to_string()).or_default().push(it.clone());
+                }
+            }
+        }
+        for mut list in groups.into_values() {
+            list.sort_by(|a, b| {
+                b.get("mtime").and_then(Value::as_i64).cmp(&a.get("mtime").and_then(Value::as_i64))
+            });
+            for it in list.into_iter().skip(keep) {
+                if let Some(file) = it.get("file").and_then(Value::as_str) {
+                    if let Ok(r) = backup_delete(game_dir.clone(), file.to_string()) {
+                        if r.get("ok").and_then(Value::as_bool) == Some(true) { removed += 1; }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut opts = auto_opts();
+    if let Value::Object(m) = &mut opts {
+        m.insert("lastRunAt".into(), json!(chrono::Local::now().timestamp_millis()));
+    }
+    crate::config::set("autoBackup", opts);
+    Ok(json!({ "ok": true, "count": made.len(), "removed": removed, "files": made }))
 }

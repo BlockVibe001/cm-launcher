@@ -1,0 +1,58 @@
+{
+  "name": "nebula-installer-tauri",
+  "productName": "星云启动器 安装器",
+  "version": "1.0.68",
+  "private": true,
+  "main": "main.js",
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.cm.blockvibe.installer",
+    "productName": "星云启动器 安装器",
+    "directories": {
+      "output": "../release/installer-tauri",
+      "buildResources": "../build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "ui/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "payload.zip",
+        "to": "payload.zip"
+      },
+      {
+        "from": "payload-manifest.json",
+        "to": "payload-manifest.json"
+      },
+      {
+        "from": "../build/nebula-icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "../build/nebula-icon.ico",
+      "sign": null,
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "星云启动器 Tauri安装器 ${version}.exe",
+      "requestExecutionLevel": "user",
+      "splashImage": "../build/portableSplash.bmp"
+    }
+  }
+}

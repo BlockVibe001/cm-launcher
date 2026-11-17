@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>星云启动器 安装</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+  <div class="ambient a1"></div>
+  <div class="ambient a2"></div>
+  <div class="ambient a3"></div>
+
+  <aside class="rail">
+    <div class="rail-top drag">
+      <div class="brand">
+        <img class="brand-mark" src="logo.png" alt="">
+        <div class="brand-text">
+          <b>星云启动器</b>
+          <small>NEBULA LAUNCHER</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail-main">
+      <div class="rail-kicker">MINECRAFT · WINDOWS</div>
+      <h2>方块之心<br>随时出发</h2>
+      <p>轻量、快速、属于你的 Minecraft 启动器。<br>保留实例与设置，安装完就能继续玩。</p>
+
+      <div class="glass-note">
+        <span class="dot"></span>
+        <div>
+          <b>本机安装</b>
+          <small>不写入系统目录，不需要管理员权限</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail-footer">
+      <span id="rail-version">v1.0.68</span>
+      <span>Windows x64</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="titlebar drag">
+      <div class="titlebar-caption">安装程序</div>
+      <div class="titlebar-actions no-drag">
+        <button class="win-btn" id="btn-min" title="最小化">—</button>
+        <button class="win-btn close" id="btn-close" title="关闭">×</button>
+      </div>
+    </header>
+
+    <section class="stage stage-welcome" id="stage-welcome">
+      <div class="eyebrow">INSTALLATION</div>
+      <h1>安装星云启动器</h1>
+      <p class="lede">把启动器装到这台电脑上。安装位置可以改，实例、存档和设置不会被清空。</p>
+
+      <div class="path-card">
+        <div class="path-icon">⌂</div>
+        <div class="path-info">
+          <small>安装到</small>
+          <div class="path-value" id="path-value">正在读取…</div>
+        </div>
+        <button class="path-btn" id="btn-pick">更改</button>
+      </div>
+
+      <div class="options">
+        <label class="option">
+          <span class="option-icon">▣</span>
+          <span class="option-copy"><b>创建桌面快捷方式</b><small>在桌面放一个星云启动器图标</small></span>
+          <input type="checkbox" id="opt-desktop" checked>
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+        <label class="option">
+          <span class="option-icon">▤</span>
+          <span class="option-copy"><b>添加到开始菜单</b><small>在开始菜单里也能找到它</small></span>
+          <input type="checkbox" id="opt-startmenu" checked>
+          <span class="switch" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="welcome-actions">
+        <button class="primary" id="btn-install">
+          <span>开始安装</span>
+          <i>→</i>
+        </button>
+        <div class="hint">安装包较大，解压需要一点时间</div>
+      </div>
+    </section>
+
+    <section class="stage stage-progress hide" id="stage-progress">
+      <div class="eyebrow">INSTALLING</div>
+      <h1>正在安装</h1>
+      <p class="lede" id="progress-stage">正在准备安装文件</p>
+
+      <div class="progress-wrap">
+        <div class="ring" id="ring">
+          <div class="ring-inner">
+            <strong id="percent">0</strong><span>%</span>
+          </div>
+        </div>
+        <div class="progress-copy">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-meta"><span id="progress-label">准备中</span><span id="progress-path"></span></div>
+        </div>
+      </div>
+
+      <div class="steps">
+        <div class="step on" id="step-files"><i></i><span>写入程序文件</span></div>
+        <div class="step" id="step-shortcut"><i></i><span>创建快捷方式</span></div>
+        <div class="step" id="step-finish"><i></i><span>完成</span></div>
+      </div>
+    </section>
+
+    <section class="stage stage-done hide" id="stage-done">
+      <div class="done-mark">✓</div>
+      <div class="eyebrow">READY</div>
+      <h1>安装完成</h1>
+      <p class="lede">星云启动器已经装好了，现在可以打开它。</p>
+      <div class="done-path" id="done-path"></div>
+      <div class="welcome-actions">
+        <button class="primary" id="btn-launch"><span>打开星云启动器</span><i>↗</i></button>
+        <button class="ghost" id="btn-done-close">关闭</button>
+      </div>
+    </section>
+
+    <div class="error-bar hide" id="error-bar"></div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

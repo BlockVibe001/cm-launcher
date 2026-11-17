@@ -145,6 +145,10 @@
     worldInfo: (saveDir) => call('world:info', { saveDir }),
     worldSchema: () => call('world:schema'),
     worldUpdate: (saveDir, patch) => call('world:update', { saveDir, patch }),
+    autoBackupOpts: () => call('autobackup:opts'),
+    autoBackupSave: (patch) => call('autobackup:save', { patch }),
+    autoBackupRun: () => call('autobackup:run'),
+    onAutoBackupDone: on('autobackup:done'),
     worldInstallUrl: (url, gameDir) => call('world:installUrl', { url, gameDir }),
 
     // Axolotl 实验室
