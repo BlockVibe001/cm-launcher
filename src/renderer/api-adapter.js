@@ -401,6 +401,8 @@
     // 外部打开
     openUrl: (url) => call('shell:open', { url }),
     openPath: (p) => call('shell:openPath', { p }),
+    sysOpenApp: (name, opts) => call('sys:openApp', { name, opts }),
+    sysOpenUrl: (url) => call('shell:open', { url }).then((ok) => ({ ok })),
     openGameDir: () => call('shell:openGameDir'),
     openModsDir: () => call('shell:openModsDir'),
     openConfigDir: () => call('shell:openConfigDir'),

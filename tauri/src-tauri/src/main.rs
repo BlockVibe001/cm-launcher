@@ -756,6 +756,7 @@ fn main() {
             mc::seedmap::lab_seed_biome,
             // ---- 外部打开（shell.rs） ----
             shell::shell_open,
+            shell::sys_open_app,
             shell::shell_open_path,
             shell::shell_open_game_dir,
             shell::shell_open_mods_dir,
