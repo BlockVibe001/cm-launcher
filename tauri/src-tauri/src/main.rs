@@ -12,6 +12,7 @@ mod memory;
 mod migrate;
 mod multiplayer;
 mod net;
+mod plugins;
 mod shell;
 mod ai;
 mod tts;
@@ -739,6 +740,13 @@ fn main() {
             // ---- 内置浏览器（browser.rs 已实现，此前未接线） ----
             browser::browser_open,
             browser::browser_info,
+            plugins::plugins_list,
+            plugins::plugins_reload,
+            plugins::plugins_install_sample,
+            plugins::plugins_open_dir,
+            plugins::plugins_toggle,
+            plugins::plugins_run_command,
+            plugins::plugins_run_entry,
             // ---- 搬家迁移（migrate.rs 已实现，此前未接线） ----
             migrate::detect,
             migrate::detect_in,

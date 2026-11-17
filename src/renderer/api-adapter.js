@@ -349,14 +349,14 @@
     horizonDownload: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
     horizonOpenDir: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
 
-    // 插件系统：非 Electron 适配层拿不到主进程，按「无插件」降级
-    pluginsList: () => Promise.resolve([]),
-    pluginsToggle: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
-    pluginsRunCommand: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
-    pluginsRunEntry: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
-    pluginsReload: () => Promise.resolve([]),
-    pluginsInstallSample: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
-    pluginsOpenDir: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    // 插件系统：Tauri 用随包 Node 运行时执行本机插件
+    pluginsList: () => call('plugins:list'),
+    pluginsToggle: (id, on) => call('plugins:toggle', { id, on }),
+    pluginsRunCommand: (id, cmdId) => call('plugins:run-command', { id, cmdId }),
+    pluginsRunEntry: (id, entryId) => call('plugins:run-entry', { id, entryId }),
+    pluginsReload: () => call('plugins:reload'),
+    pluginsInstallSample: () => call('plugins:install-sample'),
+    pluginsOpenDir: () => call('plugins:open-dir'),
     onPluginNotify: on('plugin:notify'),
 
     // 云同步：非 Electron 适配层没有主进程文件系统权限，整体降级为不可用
