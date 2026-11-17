@@ -1,52 +1,59 @@
 /* ============================================================
  * feat_onboard.js — 新手引导
- * 纯前端实现：首次启动（localStorage 无 cm.onboarded 标记）弹出
- * 步骤式引导遮罩（.modal-mask，z-index 2000）：
- *   1 欢迎  →  2 下载版本/建实例（openVersionInstaller({mode:'new'})）
- *   →  3 资源中心指引（renderPage('center')）  →  4 完成。
- * 每步都可「跳过」；跳过/完成都会写入 cm.onboarded='1'。
- * 设置页提供「重新打开新手引导」入口（.fx-onboard-reopen）。
+ * 亮点：点“去下载/去资源中心”先收起引导，不再压住后面的弹窗；
+ *       首次默认 C 盘时把“选游戏目录”并进引导，不再单独弹一次。
  * ============================================================ */
 (function () {
   'use strict';
 
   var KEY = 'cm.onboarded';
 
-  /* ---------- 文案 ---------- */
   window.__DICT__ = window.__DICT__ || {};
   window.__DICT__['zh-CN'] = Object.assign(window.__DICT__['zh-CN'] || {}, {
-    'fx.onboard.welcome.title': '👋 欢迎使用星云启动器',
-    'fx.onboard.welcome.body': '三步带你装好第一个版本，开始你的方块之旅。',
-    'fx.onboard.step2.title': '📦 下载游戏版本',
-    'fx.onboard.step2.body': '选一个 Mod 加载器（原版 / Fabric / Forge…）和游戏版本，即可创建你的第一个实例。',
-    'fx.onboard.step3.title': '✿ 前往资源中心',
-    'fx.onboard.step3.body': 'Mod、光影、皮肤、数据包……所有游戏资源都在这里下载。',
-    'fx.onboard.step4.title': '🎉 一切就绪',
-    'fx.onboard.step4.body': '回到首页选好实例，点「启动」就能开玩了！',
-    'fx.onboard.start': '开始引导',
+    'fx.onboard.welcome.title': '欢迎使用星云启动器',
+    'fx.onboard.welcome.body': '先选好游戏文件放哪，再装一个版本，几分钟就能开玩。',
+    'fx.onboard.dir.title': '先选游戏文件放哪',
+    'fx.onboard.dir.body': '默认会放在 C 盘。建议选 D/E 等空间大的盘，版本、模组、存档都放这里，不占 C 盘。',
+    'fx.onboard.dir.pick': '选择目录',
+    'fx.onboard.dir.keep': '就用当前目录',
+    'fx.onboard.download.title': '下载第一个版本',
+    'fx.onboard.download.body': '选原版或 Fabric/Forge，点下载后自动装好，不用再手动补文件。',
+    'fx.onboard.download.go': '去下载版本',
+    'fx.onboard.center.title': '资源中心',
+    'fx.onboard.center.body': '模组、光影、资源包、皮肤都在这里；下载记录会写到「下载与日志」。',
+    'fx.onboard.center.go': '打开资源中心',
+    'fx.onboard.done.title': '可以开玩了',
+    'fx.onboard.done.body': '回到首页选中刚装好的实例，点「立即启动」即可。',
+    'fx.onboard.start': '开始',
     'fx.onboard.next': '下一步',
+    'fx.onboard.back': '上一步',
     'fx.onboard.skip': '跳过',
-    'fx.onboard.download': '下载版本',
-    'fx.onboard.center': '前往资源中心',
     'fx.onboard.done': '开始使用',
     'fx.onboard.reopen': '🎓 重新打开新手引导',
+    'fx.onboard.step': '第 {n} / {total} 步',
   });
   window.__DICT__['en'] = Object.assign(window.__DICT__['en'] || {}, {
-    'fx.onboard.welcome.title': '👋 Welcome to Nebula Launcher',
-    'fx.onboard.welcome.body': 'Set up your first version in three quick steps.',
-    'fx.onboard.step2.title': '📦 Download a game version',
-    'fx.onboard.step2.body': 'Pick a mod loader (Vanilla / Fabric / Forge…) and a game version to create your first instance.',
-    'fx.onboard.step3.title': '✿ Visit the Resource Center',
-    'fx.onboard.step3.body': 'Mods, shaders, skins, datapacks — all game resources are downloaded here.',
-    'fx.onboard.step4.title': '🎉 All set',
-    'fx.onboard.step4.body': 'Pick an instance on the home page and hit Launch to play!',
-    'fx.onboard.start': 'Start tour',
+    'fx.onboard.welcome.title': 'Welcome to Nebula Launcher',
+    'fx.onboard.welcome.body': 'Pick where game files live, install one version, and you are ready to play.',
+    'fx.onboard.dir.title': 'Choose a game folder',
+    'fx.onboard.dir.body': 'The default is on C:. Pick a roomier drive — versions, mods and worlds will live there.',
+    'fx.onboard.dir.pick': 'Choose folder',
+    'fx.onboard.dir.keep': 'Keep current folder',
+    'fx.onboard.download.title': 'Install your first version',
+    'fx.onboard.download.body': 'Pick Vanilla, Fabric or Forge and download — files are installed automatically.',
+    'fx.onboard.download.go': 'Download a version',
+    'fx.onboard.center.title': 'Resource Center',
+    'fx.onboard.center.body': 'Mods, shaders, resource packs and skins live here; every download is logged.',
+    'fx.onboard.center.go': 'Open Resource Center',
+    'fx.onboard.done.title': 'Ready to play',
+    'fx.onboard.done.body': 'Go back home, pick the new instance and hit Launch.',
+    'fx.onboard.start': 'Start',
     'fx.onboard.next': 'Next',
+    'fx.onboard.back': 'Back',
     'fx.onboard.skip': 'Skip',
-    'fx.onboard.download': 'Download version',
-    'fx.onboard.center': 'Open Resource Center',
     'fx.onboard.done': 'Get started',
     'fx.onboard.reopen': '🎓 Reopen the welcome tour',
+    'fx.onboard.step': 'Step {n} / {total}',
   });
 
   function isDone() {
@@ -56,120 +63,165 @@
     try { localStorage.setItem(KEY, '1'); } catch (e) { /* ignore */ }
   }
 
-  /* ---------- 注入自带样式 ---------- */
   function injectStyle() {
     if (document.getElementById('fx-onboard-style')) return;
     var css = ''
-      + '.fx-onboard-modal { width:min(440px, 92vw); }'
-      + '.fx-onboard-body { margin:14px 0 18px; line-height:1.75; color:var(--text-dim); font-size:13.5px; }'
-      + '.fx-onboard-dots { display:flex; gap:6px; justify-content:center; margin-bottom:14px; }'
-      + '.fx-onboard-dots i { width:7px; height:7px; border-radius:50%; background:var(--bg-4); transition:all .2s; }'
-      + '.fx-onboard-dots i.on { background:var(--accent); box-shadow:0 0 8px var(--accent-glow); }'
-      + '.fx-onboard-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }';
+      + '.fx-ob-card{width:min(500px,92vw);padding:24px 24px 20px;border-radius:24px;position:relative;'
+      + 'background:linear-gradient(145deg,rgba(28,32,44,.96),rgba(14,16,24,.97));border:1px solid rgba(255,255,255,.14);'
+      + 'box-shadow:0 24px 80px rgba(0,0,0,.55);overflow:hidden}'
+      + '.fx-ob-close{position:absolute;right:14px;top:12px;width:28px;height:28px;border:0;border-radius:50%;'
+      + 'background:rgba(255,255,255,.08);color:var(--text-dim);font-size:15px;line-height:1;cursor:pointer}'
+      + '.fx-ob-close:hover{background:rgba(255,255,255,.16);color:#fff}'
+      + '.fx-ob-step{font-size:11px;letter-spacing:.14em;color:var(--text-faint);text-transform:uppercase}'
+      + '.fx-ob-ico{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;font-size:26px;margin:14px 0 12px;'
+      + 'background:linear-gradient(135deg,rgba(92,132,255,.24),rgba(160,90,255,.18));border:1px solid rgba(255,255,255,.12)}'
+      + '.fx-ob-title{font-size:20px;font-weight:800;color:#fff;margin:0 0 8px}'
+      + '.fx-ob-body{font-size:13.5px;line-height:1.78;color:var(--text-dim);margin:0 0 12px}'
+      + '.fx-ob-path{font-family:ui-monospace,Consolas,monospace;font-size:12px;padding:9px 11px;border-radius:10px;'
+      + 'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--text);word-break:break-all;margin-bottom:12px}'
+      + '.fx-ob-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin-top:18px}'
+      + '.fx-ob-back{border:0;background:none;color:var(--text-faint);font-size:12.5px;cursor:pointer;margin-right:auto;padding:6px 2px}'
+      + '.fx-ob-dots{display:flex;gap:6px;margin-top:16px}'
+      + '.fx-ob-dots i{height:4px;flex:1;border-radius:999px;background:rgba(255,255,255,.14);transition:background .2s}'
+      + '.fx-ob-dots i.on{background:var(--accent)}'
+      + '.fx-ob-shade{position:fixed;inset:0;background:rgba(4,6,12,.62);backdrop-filter:blur(8px);z-index:2000;display:grid;place-items:center}';
     var style = document.createElement('style');
     style.id = 'fx-onboard-style';
     style.textContent = css;
     (document.head || document.documentElement).appendChild(style);
   }
 
-  /* ---------- 引导遮罩 ---------- */
   var mask = null;
+  var idx = 0;
+  var chosenDir = '';
+  var dirStepEnabled = false;
 
   function close() {
     if (mask && mask.parentNode) mask.parentNode.removeChild(mask);
     mask = null;
   }
 
-  function stepDefs() {
-    return [
-      {
-        title: t('fx.onboard.welcome.title'),
-        body: t('fx.onboard.welcome.body'),
-        buttons: [
-          { label: t('fx.onboard.start'), primary: true, run: goNext },
-          { label: t('fx.onboard.skip'), primary: false, run: finish },
-        ],
-      },
-      {
-        title: t('fx.onboard.step2.title'),
-        body: t('fx.onboard.step2.body'),
-        buttons: [
-          {
-            label: t('fx.onboard.download'), primary: true,
-            run: function () { try { openVersionInstaller({ mode: 'new' }); } catch (e) { /* ignore */ } },
-          },
-          { label: t('fx.onboard.next'), primary: false, run: goNext },
-          { label: t('fx.onboard.skip'), primary: false, run: finish },
-        ],
-      },
-      {
-        title: t('fx.onboard.step3.title'),
-        body: t('fx.onboard.step3.body'),
-        buttons: [
-          {
-            label: t('fx.onboard.center'), primary: true,
-            run: function () { try { renderPage('center'); } catch (e) { /* ignore */ } },
-          },
-          { label: t('fx.onboard.next'), primary: false, run: goNext },
-          { label: t('fx.onboard.skip'), primary: false, run: finish },
-        ],
-      },
-      {
-        title: t('fx.onboard.step4.title'),
-        body: t('fx.onboard.step4.body'),
-        buttons: [
-          { label: t('fx.onboard.done'), primary: true, run: finish },
-        ],
-      },
-    ];
+  function finish() {
+    markDone();
+    close();
   }
 
-  var idx = 0;
-  function goNext() { idx++; renderStep(); }
-  function finish() { markDone(); close(); }
+  function currentDir() {
+    return chosenDir || (window.state && state.config && state.config.gameDir) || '';
+  }
 
-  function renderStep() {
-    var steps = stepDefs();
-    var cur = steps[Math.min(idx, steps.length - 1)];
-    var dotsHtml = steps.map(function (_, i) {
-      return '<i class="' + (i === Math.min(idx, steps.length - 1) ? 'on' : '') + '"></i>';
-    }).join('');
-    var actionsHtml = cur.buttons.map(function (b, i) {
-      return '<button class="btn ' + (b.primary ? 'primary' : 'ghost') + '" data-fx-btn="' + i + '" type="button">'
-        + b.label + '</button>';
-    }).join('');
+  function needsDirStep() {
+    return dirStepEnabled;
+  }
+
+  function steps() {
+    var list = [
+      {
+        ico: '👋', title: t('fx.onboard.welcome.title'), body: t('fx.onboard.welcome.body'),
+        primary: { label: t('fx.onboard.start'), run: function () { idx++; render(); } },
+        skip: true,
+      },
+    ];
+    if (needsDirStep()) {
+      list.push({
+        ico: '📁', title: t('fx.onboard.dir.title'), body: t('fx.onboard.dir.body'), path: currentDir(),
+        primary: { label: t('fx.onboard.dir.pick'), run: pickDir },
+        secondary: { label: t('fx.onboard.dir.keep'), run: function () {
+          api.configUpdate({ gameDirPicked: true }).catch(function () {});
+          idx++; render();
+        } },
+        skip: true,
+      });
+    }
+    list.push({
+      ico: '📦', title: t('fx.onboard.download.title'), body: t('fx.onboard.download.body'),
+      primary: { label: t('fx.onboard.download.go'), run: function () {
+        finish();
+        setTimeout(function () { try { openVersionInstaller({ mode: 'new' }); } catch (e) {} }, 120);
+      } },
+      skip: true,
+    });
+    list.push({
+      ico: '✦', title: t('fx.onboard.center.title'), body: t('fx.onboard.center.body'),
+      primary: { label: t('fx.onboard.center.go'), run: function () {
+        finish();
+        setTimeout(function () { try { renderPage('center'); } catch (e) {} }, 80);
+      } },
+      skip: true,
+    });
+    list.push({
+      ico: '🎉', title: t('fx.onboard.done.title'), body: t('fx.onboard.done.body'),
+      primary: { label: t('fx.onboard.done'), run: finish },
+    });
+    return list;
+  }
+
+  async function pickDir() {
+    try {
+      var dir = await api.pickDir();
+      if (!dir) return;
+      await api.configUpdate({ gameDir: dir, gameDirPicked: true });
+      if (window.state) state.config = await api.configGetAll();
+      chosenDir = dir;
+      toast('游戏目录已设为 ' + dir);
+      idx++;
+      render();
+    } catch (e) {
+      toast('选择目录失败：' + (e.message || e), true);
+    }
+  }
+
+  function render() {
+    var list = steps();
+    if (idx >= list.length) idx = list.length - 1;
+    var cur = list[idx];
+    var dots = list.map(function (_, i) { return '<i class="' + (i === idx ? 'on' : '') + '"></i>'; }).join('');
+    var buttons = '<button class="btn primary" data-ob="primary">' + cur.primary.label + '</button>';
+    if (cur.secondary) buttons += '<button class="btn" data-ob="secondary">' + cur.secondary.label + '</button>';
+    if (cur.skip) buttons += '<button class="btn ghost" data-ob="skip">' + t('fx.onboard.skip') + '</button>';
 
     mask.innerHTML = ''
-      + '<div class="modal fx-onboard-modal">'
-      +   '<div class="fx-onboard-dots">' + dotsHtml + '</div>'
-      +   '<div class="modal-title">' + cur.title + '</div>'
-      +   '<div class="fx-onboard-body">' + cur.body + '</div>'
-      +   '<div class="fx-onboard-actions">' + actionsHtml + '</div>'
+      + '<div class="fx-ob-card">'
+      + '<button class="fx-ob-close" data-ob="skip" title="' + t('fx.onboard.skip') + '">✕</button>'
+      + '<div class="fx-ob-step">' + t('fx.onboard.step').replace('{n}', idx + 1).replace('{total}', list.length) + '</div>'
+      + '<div class="fx-ob-ico">' + cur.ico + '</div>'
+      + '<div class="fx-ob-title">' + cur.title + '</div>'
+      + '<div class="fx-ob-body">' + cur.body + '</div>'
+      + (cur.path ? '<div class="fx-ob-path">' + cur.path.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>' : '')
+      + '<div class="fx-ob-actions">'
+      + (idx > 0 ? '<button class="fx-ob-back" data-ob="back">← ' + t('fx.onboard.back') + '</button>' : '')
+      + buttons
+      + '</div>'
+      + '<div class="fx-ob-dots">' + dots + '</div>'
       + '</div>';
 
-    cur.buttons.forEach(function (b, i) {
-      var el = mask.querySelector('[data-fx-btn="' + i + '"]');
-      if (el) el.addEventListener('click', b.run);
+    var primary = mask.querySelector('[data-ob="primary"]');
+    if (primary) primary.onclick = cur.primary.run;
+    var secondary = mask.querySelector('[data-ob="secondary"]');
+    if (secondary) secondary.onclick = cur.secondary.run;
+    var back = mask.querySelector('[data-ob="back"]');
+    if (back) back.onclick = function () { idx = Math.max(0, idx - 1); render(); };
+    mask.querySelectorAll('[data-ob="skip"]').forEach(function (el) {
+      el.onclick = finish;
     });
   }
 
   function show() {
     injectStyle();
-    close(); // 防重复
+    close();
     idx = 0;
+    chosenDir = '';
+    dirStepEnabled = /^[cC]:/.test((window.state && state.config && state.config.gameDir) || '');
     mask = document.createElement('div');
-    mask.className = 'modal-mask fx-onboard-mask';
+    mask.className = 'modal-mask fx-ob-shade';
     document.body.appendChild(mask);
-    renderStep();
+    render();
   }
 
-  /* ---------- 生命周期 ---------- */
   if (window.__onHook) {
     window.__onHook('appReady', function () {
-      if (!isDone()) {
-        // 等首页先渲染出来，再叠引导遮罩
-        setTimeout(show, 500);
-      }
+      if (window.__featDisclaimer && !window.__featDisclaimer.isAccepted()) return;
+      if (!isDone()) setTimeout(show, 500);
     });
     window.__onHook('pageRendered', function (page, pageEl) {
       if (page !== 'settings' || !pageEl) return;
@@ -186,10 +238,5 @@
     });
   }
 
-  /* ---------- 冒烟/调试接口 ---------- */
-  window.__featOnboard = {
-    show: show,
-    markDone: markDone,
-    isDone: isDone,
-  };
+  window.__featOnboard = { show: show, markDone: markDone, isDone: isDone };
 })();

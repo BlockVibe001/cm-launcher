@@ -286,32 +286,6 @@ function loadFeatureScripts() {
   setTimeout(next, 50);
 }
 
-/** 首次启动：游戏文件默认落在 C 盘，让玩家先选自己想放的盘 */
-async function maybeChooseGameDir() {
-  const c = state.config || {};
-  if (c.gameDirPicked === true) return;
-  // 已经在别的盘就不打扰，只提醒默认 C 盘的新用户
-  if (c.gameDir && !/^[cC]:/.test(String(c.gameDir))) {
-    await api.configUpdate({ gameDirPicked: true }).catch(() => {});
-    return;
-  }
-  const go = await askChoice('选择游戏文件存放位置', [
-    { value: 'pick', label: '选择其他盘（推荐）', desc: '版本、模组、存档都会放在你选的目录，不会占用 C 盘空间；后面设置里也能随时改。' },
-    { value: 'default', label: '先用默认 C 盘', desc: '以后想换可在设置 → 游戏目录里点“浏览”迁移。' },
-  ]);
-  if (go === 'pick') {
-    const dir = await api.pickDir();
-    if (dir) {
-      await api.configUpdate({ gameDir: dir, gameDirPicked: true });
-      state.config = await api.configGetAll();
-      toast(`游戏目录已设为 ${dir}`);
-    }
-  } else {
-    await api.configUpdate({ gameDirPicked: true });
-    state.config = { ...c, gameDirPicked: true };
-  }
-}
-
 async function init() {
   state.config = await api.configGetAll();
   applyNotifyOffset(state.config.notifyOffsetY);
@@ -355,9 +329,6 @@ async function init() {
   updateTopUser();
 
   renderPage('home');
-
-  // 首次启动让玩家自己选游戏目录，避免默认全塞进 C 盘
-  setTimeout(maybeChooseGameDir, 700);
 
   // 功能扩展脚本不参与首屏：等窗口画出来后再按原顺序异步加载，
   // 首屏可交互时间因此不再包含这十几个文件的解析/执行。
