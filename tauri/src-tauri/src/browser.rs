@@ -20,45 +20,46 @@ fn is_http(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
-/// 打开/聚焦浏览器窗口并导航到 url。已存在则复用（eval 导航 iframe），否则新建。
-/// 窗口加载本地 browser.html（书签栏 + 地址栏 + iframe），供 browser:open 命令和微软设备码登录复用。
+/// 打开/聚焦浏览器窗口并导航到 url。
+/// Tauri 的 WebView2 不支持 Electron 的 `<webview>` 壳，这里直接开一个原生 WebView 窗口，
+/// 这样内置浏览器至少能真正显示网页，而不是卡在空壳页面。
 pub(crate) fn open_browser_window(app: &AppHandle, url: &str) -> CmdResult<()> {
-    // browser.html 通过轮询 window.__pending_nav 消费导航目标；无论窗口新旧都先写入
-    let nav_js = |url: &str| -> Result<String, AppError> {
-        Ok(format!("window.__pending_nav = {}", serde_json::to_string(url)?))
-    };
+    let raw = if url.trim().is_empty() { "https://www.mcmod.cn/" } else { url.trim() };
+    let target = tauri::Url::parse(raw).map_err(|e| AppError::Msg(e.to_string()))?;
+    if !is_http(raw) {
+        return Err(AppError::Msg("内置浏览器只允许 http/https 地址".into()));
+    }
     if let Some(win) = app.get_webview_window("browser") {
         if win.is_minimized().unwrap_or(false) {
             let _ = win.unminimize();
         }
         let _ = win.set_focus();
-        let js = nav_js(url)?;
-        let _ = win.eval(&js);
+        win.navigate(target).map_err(|e| AppError::Msg(e.to_string()))?;
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(app, "browser", tauri::WebviewUrl::App("browser.html".into()))
-        .title("CM 浏览器")
-        .decorations(false)
+    tauri::WebviewWindowBuilder::new(app, "browser", tauri::WebviewUrl::External(target))
+        .title("星云浏览器")
         .inner_size(1180.0, 760.0)
         .min_inner_size(720.0, 480.0)
         .center()
         .build()
         .map_err(|e| AppError::Msg(e.to_string()))?;
-    // 页面可能尚未加载完成：browser.html 初始化与轮询都会消费这个变量
-    if let Some(win) = app.get_webview_window("browser") {
-        let js = nav_js(url)?;
-        let _ = win.eval(&js);
-    }
     Ok(())
 }
 
 /// channel: browser:open
 #[tauri::command(rename = "browser:open")]
-pub fn browser_open(url: String, app: AppHandle) -> CmdResult<Value> {
-    if !is_http(&url) {
+pub async fn browser_open(url: Option<String>, app: AppHandle) -> CmdResult<Value> {
+    let target = url.unwrap_or_default();
+    if !target.trim().is_empty() && !is_http(target.trim()) {
         return Ok(json!(false));
     }
-    open_browser_window(&app, &url)?;
+    // 窗口创建必须回到主线程；放进回调后立即返回，避免前端 invoke 一直挂着。
+    let app2 = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = open_browser_window(&app2, &target);
+    })
+    .map_err(|e| AppError::Msg(e.to_string()))?;
     Ok(json!(true))
 }
 

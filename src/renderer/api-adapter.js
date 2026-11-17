@@ -269,7 +269,7 @@
     onAiAgentEvent: on('ai:agent:event'),
 
     // 内置浏览器
-    browserOpen: (url) => call('browser:open', { url }),
+    browserOpen: (url) => call('browser:open', { url: url || 'https://www.mcmod.cn/' }),
     browserInfo: () => call('browser:info'),
 
     // 日志 / Ping
