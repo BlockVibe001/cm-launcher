@@ -329,6 +329,9 @@
 
   /* ---------- 联机大厅页入口 ---------- */
   function injectEntry(pageEl) {
+    // Tauri 端用这里的 server:* 管理台；Electron 版的 msrv:* 卡片在这里没有命令，隐藏掉避免两套“一键开服”互相打架
+    const legacy = pageEl.querySelector('#lan-card-msrv');
+    if (legacy) legacy.remove();
     if (pageEl.querySelector('#fx-srv-entry')) return;
     const card = document.createElement('div');
     card.className = 'glass lan-card lan-wide';
