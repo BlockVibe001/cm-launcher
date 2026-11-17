@@ -6,6 +6,7 @@ mod browser;
 mod config;
 mod error;
 mod events;
+mod extra;
 mod logger;
 mod mc;
 mod memory;
@@ -338,6 +339,17 @@ async fn search_modrinth(query: String, mc_version: String, mod_loader: String, 
     mc::search::modrinth_search(&query, &mc_version, &mod_loader, &project_type).await
 }
 
+#[tauri::command(rename = "search:modrinth:page")]
+async fn search_modrinth_page(
+    query: String,
+    mc_version: String,
+    mod_loader: String,
+    project_type: String,
+    offset: Option<u32>,
+) -> CmdResult<Value> {
+    mc::search::modrinth_search_page(&query, &mc_version, &mod_loader, &project_type, offset.unwrap_or(0)).await
+}
+
 #[tauri::command(rename = "search:modrinth:versions")]
 async fn search_modrinth_versions(project_id: String, mc_version: String, mod_loader: String) -> CmdResult<Value> {
     mc::search::modrinth_versions(&project_id, &mc_version, &mod_loader).await
@@ -349,8 +361,11 @@ async fn search_modrinth_project(project_id: String) -> CmdResult<Value> {
 }
 
 #[tauri::command(rename = "search:modrinth:download")]
-async fn search_modrinth_download(file: Value, game_dir: String, project_type: String) -> CmdResult<String> {
-    mc::search::modrinth_download(&file, &game_dir, &project_type).await
+async fn search_modrinth_download(app: tauri::AppHandle, file: Value, game_dir: String, project_type: String) -> CmdResult<String> {
+    let path = mc::search::modrinth_download(&file, &game_dir, &project_type).await?;
+    let name = file.get("name").and_then(Value::as_str).unwrap_or("下载文件");
+    extra::record_download(&app, name, &path, &project_type);
+    Ok(path)
 }
 
 #[tauri::command(rename = "search:curseforge")]
@@ -364,8 +379,11 @@ async fn search_curseforge_files(mod_id: String, mc_version: String) -> CmdResul
 }
 
 #[tauri::command(rename = "search:curseforge:download")]
-async fn search_curseforge_download(file: Value, game_dir: String) -> CmdResult<String> {
-    mc::search::curseforge_download(&file, &game_dir).await
+async fn search_curseforge_download(app: tauri::AppHandle, file: Value, game_dir: String) -> CmdResult<String> {
+    let path = mc::search::curseforge_download(&file, &game_dir).await?;
+    let name = file.get("name").and_then(Value::as_str).unwrap_or("下载文件");
+    extra::record_download(&app, name, &path, "mod");
+    Ok(path)
 }
 
 #[tauri::command(rename = "search:curseforge:world")]
@@ -677,6 +695,7 @@ fn main() {
             update_install,
             update_open,
             search_modrinth,
+            search_modrinth_page,
             search_modrinth_versions,
             search_modrinth_project,
             search_modrinth_download,
@@ -837,6 +856,17 @@ fn main() {
             // ============ 首页信息（空壳补齐） ============
             home::home_news,
             home::home_play_log,
+            // ============ 工具页 / 镜像 / Horizon ============
+            extra::options_read,
+            extra::options_apply,
+            extra::instances_usage,
+            extra::mirror_health,
+            extra::bedrock_windows_versions,
+            extra::bedrock_versions,
+            extra::bedrock_version_downloads,
+            extra::horizon_releases,
+            extra::horizon_download,
+            extra::horizon_open_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

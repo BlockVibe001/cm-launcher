@@ -189,8 +189,13 @@ pub async fn check(app: &AppHandle, url: &str, channel: Option<String>) -> CmdRe
         .await
         .map_err(|_| AppError::Msg("更新清单不是合法的 JSON".into()))?;
     let current = app.package_info().version.to_string();
+    // GitHub /releases/latest 返回单个 release 对象，/releases 返回数组；
+    // 本地 update.json 才是带 version 字段的清单，两者不能混着读。
     let mut manifest = if data.is_array() {
-        pick_release(&data, &want).ok_or_else(|| AppError::Msg(format!("GitHub Releases 里没有 {want} 通道的安装包")))? 
+        pick_release(&data, &want).ok_or_else(|| AppError::Msg(format!("GitHub Releases 里没有 {want} 通道的安装包")))?
+    } else if data.get("tag_name").is_some() || data.get("assets").is_some() {
+        pick_release(&Value::Array(vec![data.clone()]), &want)
+            .ok_or_else(|| AppError::Msg(format!("GitHub Release 里没有 {want} 通道的安装包")))?
     } else {
         data.clone()
     };

@@ -74,6 +74,16 @@ pub async fn modrinth_search(
     mod_loader: &str,
     project_type: &str,
 ) -> CmdResult<Value> {
+    modrinth_search_page(query, mc_version, mod_loader, project_type, 0).await
+}
+
+pub async fn modrinth_search_page(
+    query: &str,
+    mc_version: &str,
+    mod_loader: &str,
+    project_type: &str,
+    offset: u32,
+) -> CmdResult<Value> {
     let build_facets = |with_version: bool| -> String {
         let mut f: Vec<String> = vec![format!(r#"["project_type:{project_type}"]"#)];
         if with_version && !mc_version.is_empty() {
@@ -85,20 +95,22 @@ pub async fn modrinth_search(
         format!("[{}]", f.join(","))
     };
 
-    async fn do_search(query: &str, facets: &str) -> CmdResult<Value> {
+    async fn do_search(query: &str, facets: &str, offset: u32) -> CmdResult<Value> {
+        let offset_s = offset.to_string();
         let qs = serde_urlencoded::to_string([
             ("query", query),
             ("limit", "20"),
+            ("offset", offset_s.as_str()),
             ("facets", facets),
         ])
         .unwrap_or_default();
         mr_fetch(&format!("/search?{qs}")).await
     }
 
-    let mut data = do_search(query, &build_facets(true)).await?;
+    let mut data = do_search(query, &build_facets(true), offset).await?;
     let total = data.get("total_hits").and_then(|v| v.as_u64()).unwrap_or(0);
-    if !mc_version.is_empty() && total == 0 {
-        data = do_search(query, &build_facets(false)).await?;
+    if !mc_version.is_empty() && total == 0 && offset == 0 {
+        data = do_search(query, &build_facets(false), offset).await?;
     }
 
     let hits = data.get("hits").and_then(|v| v.as_array()).cloned().unwrap_or_default();

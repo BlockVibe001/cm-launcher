@@ -139,6 +139,9 @@
     contentLogRead: (gameDir, rel) => call('content:log:read', { gameDir, rel }),
     contentDelete: (gameDir, category, name) => call('content:delete', { gameDir, category, name }),
     contentFixChinese: (gameDir) => call('content:fixChinese', { gameDir }),
+    optionsRead: (gameDir) => call('options:read', { gameDir }),
+    optionsApply: (gameDir, patch) => call('options:apply', { gameDir, patch }),
+    instancesUsage: (gameDir) => call('instances:usage', { gameDir }),
 
     // 存档
     worldList: (gameDir) => call('world:list', { gameDir }),
@@ -343,11 +346,18 @@
     bedrockOpenStore: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
     bedrockOpenSaves: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
     bedrockInstallPackage: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
+    bedrockWindowsVersions: (force) => call('bedrock:windows-versions', { force: !!force }),
+    bedrockVersions: (force) => call('bedrock:versions', { force: !!force }),
+    bedrockVersionDownloads: (version, kind) => call('bedrock:version-downloads', { version, kind }),
 
-    // Horizon：非 Electron 适配层没有主进程下载权限
-    horizonReleases: () => Promise.resolve({ total: 0, releases: [] }),
-    horizonDownload: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
-    horizonOpenDir: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
+    // Horizon：直接走官方 GitHub Releases，文件不中转
+    horizonReleases: (force) => call('horizon:releases', { force: !!force }),
+    horizonDownload: (opts) => call('horizon:download', {
+      url: opts && opts.url,
+      name: opts && opts.name,
+      gameDir: opts && opts.gameDir,
+    }),
+    horizonOpenDir: (gameDir) => call('horizon:openDir', { gameDir }),
 
     // 插件系统：Tauri 用随包 Node 运行时执行本机插件
     pluginsList: () => call('plugins:list'),
