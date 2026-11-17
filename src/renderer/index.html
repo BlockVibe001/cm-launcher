@@ -108,6 +108,25 @@
         <!-- 页面由 JS 动态渲染 -->
       </main>
     </div>
+
+    <!-- 手机端底部 Tab：仅在手机适配渲染器显示 -->
+    <nav class="mobile-tabs" aria-label="移动端导航">
+      <button class="nav-item active" data-page="home" type="button">
+        <span class="nav-ico"><svg viewBox="0 0 20 20"><path d="M3.4 10.2 10 4.4l6.6 5.8"/><path d="M6 9.6V16h8V9.6"/></svg></span><span class="nav-label">首页</span>
+      </button>
+      <button class="nav-item" data-page="versions" type="button">
+        <span class="nav-ico"><svg viewBox="0 0 20 20"><path d="M10 3.6 16.6 7 10 10.4 3.4 7Z"/><path d="M4 10.4 10 13.6 16 10.4"/><path d="M4 13.6 10 16.8 16 13.6"/></svg></span><span class="nav-label">版本</span>
+      </button>
+      <button class="nav-item" data-page="center" type="button">
+        <span class="nav-ico"><svg viewBox="0 0 20 20"><path d="M10 3.4 16.6 10 10 16.6 3.4 10Z"/><circle cx="10" cy="10" r="2.1"/></svg></span><span class="nav-label">模组</span>
+      </button>
+      <button class="nav-item" data-page="downloads" type="button">
+        <span class="nav-ico"><svg viewBox="0 0 20 20"><path d="M10 3.6v7.6"/><path d="M6.9 8.7 10 11.9l3.1-3.2"/><path d="M4.4 14.1v2.3h11.2v-2.3"/></svg></span><span class="nav-label">下载</span>
+      </button>
+      <button class="nav-item" data-page="settings" type="button">
+        <span class="nav-ico"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.9"/><path d="M10 3.2v2.1M10 14.7v2.1M3.2 10h2.1M14.7 10h2.1M5.2 5.2l1.5 1.5M13.3 13.3l1.5 1.5M14.8 5.2l-1.5 1.5M6.7 13.3l-1.5 1.5"/></svg></span><span class="nav-label">设置</span>
+      </button>
+    </nav>
   </div>
 
   <!-- 顶部通知栈：灵动通知与加载胶囊共用同一列，按顺序向下叠放 -->

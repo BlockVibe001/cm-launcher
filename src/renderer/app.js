@@ -472,6 +472,7 @@ function applyTheme() {
   document.body.setAttribute('data-fontsize', ui.fontSize || 'normal');
   document.body.setAttribute('data-contrast', ui.contrast || 'normal');
   document.body.setAttribute('data-renderer', ui.renderer === 'mobile' ? 'mobile' : 'desktop');
+  syncBrandTitle(state.currentPage || 'home');
   // 字号缩放走页面缩放（主进程 setZoomFactor）：视口会跟着重排，
   // 不会像 body{zoom} 那样把 100vh 撑出屏幕，文字也不会被位图拉伸发虚
   const uiZoom = ui.fontSize === 'large' ? 1.06 : ui.fontSize === 'xlarge' ? 1.12 : 1;
@@ -4505,6 +4506,20 @@ function bindWindowControls() {
 
 /* ========== 导航 ========== */
 
+const MOBILE_PAGE_TITLES = {
+  home: '首页', instances: '实例', instance: '实例', versions: '版本', center: '模组',
+  servers: '联机', lab: '实验室', account: '账号', skins: '皮肤',
+  downloads: '下载', tools: '工具', settings: '设置', world: '世界',
+};
+
+function syncBrandTitle(page) {
+  const el = document.querySelector('.brand-name');
+  if (!el) return;
+  if (el.dataset.defaultHtml == null) el.dataset.defaultHtml = el.innerHTML;
+  const mobile = document.body.getAttribute('data-renderer') === 'mobile';
+  el.innerHTML = mobile ? (MOBILE_PAGE_TITLES[page] || '星云启动器') : el.dataset.defaultHtml;
+}
+
 function bindNav() {
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.onclick = () => renderPage(btn.dataset.page);
@@ -4522,6 +4537,7 @@ function renderPage(page) {
   if (state._autoMemTimer) { clearInterval(state._autoMemTimer); state._autoMemTimer = null; }
   liquidFinish();   // 页面即将重建，先把可能的拖动手势收回
   state.currentPage = page;
+  syncBrandTitle(page);
   document.querySelectorAll('.nav-item').forEach((b) => {
     b.classList.toggle('active', b.dataset.page === page);
   });
@@ -17988,7 +18004,7 @@ function renderSettings(page) {
       <div class="field">
         <label>界面渲染器</label>
         <div class="ui-opts" id="ui-renderer"></div>
-        <div class="hint-text">桌面渲染器＝当前完整布局；手机适配＝底部导航 + 单列卡片的紧凑布局，适合 Android 和窄屏窗口。Windows 可直接切换预览，Linux / macOS 客户端后续接入。</div>
+        <div class="hint-text">桌面渲染器＝当前完整布局；手机适配＝ZL2 风格左侧图标导航 + 单列紧凑布局，适合 Android 和窄屏窗口。Windows 可直接切换预览，Linux / macOS 客户端后续接入。</div>
       </div>
       <div class="field">
         <label>背景氛围</label>
