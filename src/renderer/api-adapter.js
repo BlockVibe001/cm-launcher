@@ -176,6 +176,8 @@
     aiSpeechToText: (cfg, audioBuffer) => call('ai:speechToText', { cfg, audioBuffer }),
     aiFetchUrl: (url, maxChars) => call('ai:fetchUrl', { url, maxChars }),
     aiLogPath: () => call('ai:logPath'),
+    aiTtsSpeech: (text, opts) => call('ai:ttsSpeech', { text, opts }),
+    aiTtsVoices: () => call('ai:ttsVoices'),
 
     // Mod 更新 / 回滚
     modsCheckUpdates: (gameDir, mcVersion, loader) => call('mods:checkUpdates', { gameDir, mcVersion, loader }),

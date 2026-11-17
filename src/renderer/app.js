@@ -2475,13 +2475,7 @@ function openAIChat() {
   function createNewChatSession() {
     if (sending) { toast('这条还在回复，等它说完再新建会话', true); return; }
     if (window.XingyunVoice) XingyunVoice.stop();
-    // 当前会话如果还是空的，不重复建；直接留在这个新会话
-    const current = chatSessions.find((s) => s.id === currentSessionId);
-    if (current && !cleanMessages(current.messages).length) {
-      showChatWelcome();
-      chatInput.focus();
-      return;
-    }
+    // 每次点「新会话」都新建一条，哪怕当前还停在空白对话里，也不会看起来没反应
     const s = newSession();
     chatSessions.unshift(s);
     currentSessionId = s.id;
@@ -2490,6 +2484,7 @@ function openAIChat() {
     renderChatHistory();
     showChatWelcome();
     chatInput.focus();
+    toast('已创建新对话', false);
   }
 
   $('ai-new-chat').onclick = createNewChatSession;

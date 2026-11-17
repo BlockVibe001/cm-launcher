@@ -14,6 +14,7 @@ mod multiplayer;
 mod net;
 mod shell;
 mod ai;
+mod tts;
 mod dnd;
 mod downloads;
 mod lab;
@@ -783,6 +784,8 @@ fn main() {
             ai::ai_test,
             ai::ai_chat,
             ai::ai_translate,
+            tts::tts_voices,
+            tts::tts_speech,
             dnd::dnd_inspect,
             dnd::dnd_import,
             dnd::world_install_url,
