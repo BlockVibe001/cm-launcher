@@ -7557,13 +7557,18 @@ function packWidgetPositions(list) {
   return list;
 }
 
+function hasWidgetPos(it) {
+  return it.x != null && it.y != null
+    && Number.isFinite(Number(it.x)) && Number.isFinite(Number(it.y));
+}
+
 /** 老布局/新加入组件没有 x、y 时补一个不压住别人的位置 */
 function ensureWidgetPositions(list) {
   let bottom = 0;
   const placed = [];
   (list || []).forEach((it) => {
     if (!it) return;
-    const hasPos = Number.isFinite(Number(it.x)) && Number.isFinite(Number(it.y));
+    const hasPos = hasWidgetPos(it);
     if (hasPos) {
       const [x, y] = clampWidgetPos(it.x, it.y, it.w);
       it.x = x;
@@ -7583,6 +7588,17 @@ function ensureWidgetPositions(list) {
   // 历史布局如果有叠在一起的卡片，读取时顺手分开
   resolveWidgetOverlaps(list, null);
   return list;
+}
+
+/** 检测旧版给默认布局排成“全部贴左一列”的错误结果 */
+function isStackedDefaultLayout(list) {
+  const visible = (list || []).filter((it) => it && it.visible !== false);
+  if (visible.length < 3) return false;
+  const defaultOrder = HOME_DEFAULT_LAYOUT
+    .map((x) => x.id)
+    .filter((id) => visible.some((it) => it.id === id));
+  if (visible.map((it) => it.id).join('|') !== defaultOrder.join('|')) return false;
+  return visible.every((it) => Math.abs(Number(it.x) || 0) < 0.002);
 }
 
 /** 校验并补齐组件列表；缺失的组件进入组件库（默认不展示） */
@@ -7630,7 +7646,10 @@ function homeWidgets() {
   if (saved && typeof saved === 'object' && !Array.isArray(saved)
     && Array.isArray(saved.items)) {
     if (saved.version === HOME_LAYOUT_VERSION) {
-      const list = normalizeHomeLayout(saved.items, false);
+      let list = normalizeHomeLayout(saved.items, false);
+      if (isStackedDefaultLayout(list)) {
+        list = packWidgetPositions(list);
+      }
       // 有重复/非法尺寸/缺项时写回一次修正结果，避免每次渲染都重新计算
       if (!sameLayout(list, saved.items)) saveHomeWidgets(list);
       return list;
