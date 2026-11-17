@@ -12,6 +12,12 @@
 
   /* ---------- 错误与桩 ---------- */
   const toError = (e) => (e instanceof Error ? e : new Error(typeof e === 'string' ? e : (e && e.message) || String(e)));
+  const audioB64 = (buf) => {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf || []);
+    let s = '';
+    for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
   const isNotImpl = (e) => /not found|unknown|not implemented/i.test(String((e && e.message) || e));
 
   // 未迁移通道的默认返回值（按通道名）。已全部实现或移除调用，暂无兜底条目。
@@ -176,7 +182,8 @@
     aiTest: (cfg) => call('ai:test', { cfg }),
     aiChat: (cfg) => call('ai:chat', { cfg }),
     aiTranslate: (cfg, text, targetLang) => call('ai:translate', { cfg, text, targetLang }),
-    aiSpeechToText: (cfg, audioBuffer) => call('ai:speechToText', { cfg, audioBuffer }),
+    aiSpeechToText: (cfg, audioBuffer, language) => call('ai:speechToText', { cfg, audioB64: audioB64(audioBuffer), language }),
+    aiSpeechLocal: (audioBuffer, language) => call('ai:speechLocal', { audioB64: audioB64(audioBuffer), language }),
     aiFetchUrl: (url, maxChars) => call('ai:fetchUrl', { url, maxChars }),
     aiLogPath: () => call('ai:logPath'),
     aiTtsSpeech: (text, opts) => call('ai:ttsSpeech', { text, opts }),

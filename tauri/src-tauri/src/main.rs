@@ -36,6 +36,7 @@ mod feat_search;
 mod feat_server;
 mod feat_share;
 mod feat_skin;
+mod speech;
 mod home;
 mod feat_theme;
 mod feat_update;
@@ -814,6 +815,8 @@ fn main() {
             ai::ai_translate,
             tts::tts_voices,
             tts::tts_speech,
+            speech::speech_to_text,
+            speech::speech_local,
             dnd::dnd_inspect,
             dnd::dnd_import,
             dnd::world_install_url,
