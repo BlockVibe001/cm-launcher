@@ -100,8 +100,10 @@ fn run_runner(app: &AppHandle, dir: &Path, action: &str, id: &str) -> CmdResult<
         return Err(AppError::Msg(msg.to_string()));
     }
     if let Some(notes) = value.get("notifications").and_then(Value::as_array) {
-        for n in notes {
-            let _ = app.emit("plugin:notify", n.clone());
+        if action != "list" {
+            for n in notes {
+                let _ = app.emit("plugin:notify", n.clone());
+            }
         }
     }
     Ok(value)
@@ -178,8 +180,10 @@ fn scan(app: &AppHandle) -> Vec<Value> {
             continue;
         }
         let id = dir.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
-        let enabled = !disabled.iter().any(|x| x == &id);
-        let mut rec = record(&dir, enabled);
+        let mut rec = record(&dir, true);
+        let rec_id = rec.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let enabled = !disabled.iter().any(|x| x == &id || x == &rec_id);
+        rec["enabled"] = json!(enabled);
         if enabled && rec.get("error").and_then(Value::as_str).unwrap_or("").is_empty() {
             match run_runner(app, &dir, "list", "") {
                 Ok(v) => {
