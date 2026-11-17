@@ -1710,8 +1710,13 @@ function openAIChat() {
   };
   paintTts();
   // 离线神经语音：面板一打开就预热模型，不要等第一条回复才冷启动
-  if (vcfg.voice === 'neural' && window.XingyunVoice && XingyunVoice.warmup) {
-    setTimeout(() => { try { XingyunVoice.warmup(); } catch (e) { /* ignore */ } }, 400);
+  if (window.XingyunVoice) {
+    setTimeout(() => {
+      try {
+        if (vcfg.voice === 'neural') XingyunVoice.warmup();
+        else XingyunVoice.warmupCloud();
+      } catch (e) { /* ignore */ }
+    }, 400);
   }
   if (ttsBtn) {
     ttsBtn.onclick = () => {
@@ -18387,6 +18392,7 @@ function renderSettings(page) {
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn" id="plugin-reload" type="button">重新扫描</button>
         <button class="btn" id="plugin-sample" type="button">安装示例插件</button>
+        <button class="btn" id="plugin-create" type="button">新建插件</button>
         <button class="btn" id="plugin-open" type="button">打开插件目录</button>
         <span class="hint-text" id="plugin-hint"></span>
       </div>
@@ -19364,6 +19370,20 @@ function renderSettings(page) {
     }
     $('plugin-hint').textContent = r.installed ? '示例插件已安装' : '示例插件已存在，已重新加载';
     await renderPlugins();
+  };
+  $('plugin-create').onclick = async () => {
+    const id = prompt('插件 id（小写字母/数字/-/_，例如 my-plugin）：', 'my-plugin');
+    if (!id) return;
+    const name = prompt('插件名称：', '我的插件') || id;
+    $('plugin-hint').textContent = '创建中…';
+    try {
+      const r = await api.pluginsCreate(id, name, '');
+      if (!r || !r.ok) throw new Error((r && r.error) || '创建失败');
+      $('plugin-hint').textContent = '已创建，编辑 index.js 即可写自己的逻辑';
+      await renderPlugins();
+    } catch (e) {
+      $('plugin-hint').textContent = '创建失败：' + e.message;
+    }
   };
   $('plugin-open').onclick = async () => {
     const r = await api.pluginsOpenDir();

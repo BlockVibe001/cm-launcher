@@ -221,6 +221,41 @@ pub fn plugins_install_sample() -> CmdResult<Value> {
     Ok(json!({ "ok": true, "installed": !existed, "path": dir.to_string_lossy() }))
 }
 
+#[tauri::command(rename = "plugins:create")]
+pub fn plugins_create(id: String, name: String, description: Option<String>) -> CmdResult<Value> {
+    let id = id.trim().to_lowercase();
+    if !safe_id(&id) {
+        return Err(AppError::Msg("插件 id 只能包含小写字母、数字、点、下划线、短横线".into()));
+    }
+    let dir = plugin_root().join(&id);
+    if dir.join("plugin.json").is_file() {
+        return Err(AppError::Msg("同名插件已存在".into()));
+    }
+    fs::create_dir_all(&dir)?;
+    let name = if name.trim().is_empty() { id.clone() } else { name.trim().to_string() };
+    let description = description.unwrap_or_else(|| "我自己创建的插件".into());
+    let manifest = json!({
+        "id": id, "name": name, "version": "1.0.0", "description": description,
+        "author": "我", "main": "index.js", "apiVersion": 1,
+        "permissions": ["command", "notify"]
+    });
+    fs::write(dir.join("plugin.json"), serde_json::to_string_pretty(&manifest)?)?;
+    let title = format!("{} 已加载", name.replace('\'', "\\'"));
+    let index = format!(r#"module.exports = {{
+  activate(ctx) {{
+    ctx.registerCommand({{
+      id: 'hello',
+      title: '打个招呼',
+      run() {{ return '你好，这是「{name}」的第一个命令。'; }}
+    }});
+    ctx.notify('插件已加载', '{title}');
+  }}
+}};
+"#, name = name.replace('\'', "\\'"));
+    fs::write(dir.join("index.js"), index)?;
+    Ok(json!({ "ok": true, "path": dir.to_string_lossy(), "id": id }))
+}
+
 #[tauri::command(rename = "plugins:open-dir")]
 pub fn plugins_open_dir() -> CmdResult<Value> {
     let dir = plugin_root();

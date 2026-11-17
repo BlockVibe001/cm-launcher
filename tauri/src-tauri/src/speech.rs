@@ -150,7 +150,8 @@ fn sapi(bytes: &[u8]) -> Result<String, String> {
     let enc = STANDARD.encode(utf16);
     #[cfg(windows)]
     use std::os::windows::process::CommandExt;
-    let mut cmd = Command::new("powershell.exe");
+    let ps = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+    let mut cmd = Command::new(if std::path::Path::new(ps).exists() { ps } else { "powershell.exe" });
     cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &enc]);
     #[cfg(windows)]
     cmd.creation_flags(0x08000000);

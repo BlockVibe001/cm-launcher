@@ -187,6 +187,7 @@
     aiFetchUrl: (url, maxChars) => call('ai:fetchUrl', { url, maxChars }),
     aiLogPath: () => call('ai:logPath'),
     aiTtsSpeech: (text, opts) => call('ai:ttsSpeech', { text, opts }),
+    aiTtsWarmup: () => call('ai:ttsWarmup'),
     aiTtsVoices: () => call('ai:ttsVoices'),
 
     // Mod 更新 / 回滚
@@ -373,6 +374,7 @@
     pluginsRunEntry: (id, entryId) => call('plugins:run-entry', { id, entryId }),
     pluginsReload: () => call('plugins:reload'),
     pluginsInstallSample: () => call('plugins:install-sample'),
+    pluginsCreate: (id, name, description) => call('plugins:create', { id, name, description }),
     pluginsOpenDir: () => call('plugins:open-dir'),
     onPluginNotify: on('plugin:notify'),
 

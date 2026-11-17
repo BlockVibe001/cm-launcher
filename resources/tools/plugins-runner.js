@@ -77,7 +77,11 @@ try {
   };
 
   const requireFromPlugin = createRequire(entryPath);
-  const plugin = requireFromPlugin(entryPath);
+  let plugin = requireFromPlugin(entryPath);
+  // 兼容常见写法：export default、module.exports = activate、module.exports.default
+  if (plugin && plugin.__esModule && plugin.default) plugin = plugin.default;
+  else if (plugin && typeof plugin.activate !== 'function' && plugin.default) plugin = plugin.default;
+  if (typeof plugin === 'function') plugin = { activate: plugin };
   if (!plugin || typeof plugin.activate !== 'function') fail('插件没有导出 activate 函数');
   plugin.activate(ctx);
 

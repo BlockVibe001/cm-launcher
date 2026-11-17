@@ -3939,7 +3939,8 @@ body[data-wall="custom"] .bg-layer .bg-grid { display: none; }
      （通知与加载胶囊共用这一列，天然一起移动、保持 8px 间距） */
   /* 顶栏高度 64px：默认落在顶栏下沿，不遮住搜索框和窗口按钮；
      设置页滑条仍在这个基准上做上下偏移 */
-  top: calc(var(--notify-top, 6px) + 34px);
+  /* 贴屏幕最上方，不再落在顶栏下沿 */
+  top: var(--notify-top, 6px);
   left: 0;
   right: 0;
   z-index: 9000;
@@ -3991,11 +3992,11 @@ body[data-wall="custom"] .bg-layer .bg-grid { display: none; }
   display: flex;
   align-items: center;
   /* 固定高度：收成一个圆点时是 50×50 的圆，展开时也不让文字把它竖向撑高 */
-  height: 50px;
-  max-width: 50px;
-  min-width: 50px;
+  height: 56px;
+  max-width: 56px;
+  min-width: 56px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: 24px;
   cursor: pointer;
   /* 允许长文本换行（原来 nowrap 直接把后半句裁掉了） */
   white-space: normal;
@@ -4066,7 +4067,7 @@ body[data-wall="custom"] .bg-layer .bg-grid { display: none; }
 .island-pill.has-actions.expanded {
   max-width: min(640px, calc(100vw - 24px));
   height: auto;
-  min-height: 50px;
+  min-height: 56px;
   padding: 7px 0;
 }
 

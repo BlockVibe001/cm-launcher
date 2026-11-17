@@ -1,6 +1,37 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
-use msedge_tts::tts::{client::connect, SpeechConfig};
+use msedge_tts::tts::client::{connect, MSEdgeTTSClient, SynthesizedAudio};
+use msedge_tts::tts::SpeechConfig;
 use serde_json::{json, Value};
+use std::net::TcpStream;
+use std::sync::{Mutex, OnceLock};
+
+type Edge = MSEdgeTTSClient<TcpStream>;
+static EDGE: OnceLock<Mutex<Option<Edge>>> = OnceLock::new();
+
+fn edge_client() -> &'static Mutex<Option<Edge>> {
+    EDGE.get_or_init(|| Mutex::new(None))
+}
+
+/// 复用同一条 Edge WebSocket，避免每次朗读都重新握手；连接失效时重建一次。
+fn synth(text: &str, config: &SpeechConfig) -> Result<SynthesizedAudio, String> {
+    let mut guard = edge_client().lock().map_err(|_| "Edge TTS 锁失败".to_string())?;
+    for attempt in 0..2 {
+        if guard.is_none() {
+            *guard = Some(connect().map_err(|e| format!("Edge TTS 连接失败：{e}"))?);
+        }
+        let client = guard.as_mut().unwrap();
+        match client.synthesize(text, config) {
+            Ok(a) => return Ok(a),
+            Err(e) => {
+                *guard = None;
+                if attempt == 1 {
+                    return Err(format!("Edge TTS 合成失败：{e}"));
+                }
+            }
+        }
+    }
+    Err("Edge TTS 合成失败".into())
+}
 
 fn edge_voice(id: &str) -> &'static str {
     match id {
@@ -42,6 +73,23 @@ pub fn tts_voices() -> Value {
     ])
 }
 
+#[tauri::command(rename = "ai:ttsWarmup")]
+pub async fn tts_warmup() -> Value {
+    let ok = tauri::async_runtime::spawn_blocking(|| {
+        let mut guard = match edge_client().lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        if guard.is_none() {
+            *guard = connect().ok();
+        }
+        guard.is_some()
+    })
+    .await
+    .unwrap_or(false);
+    json!({ "ok": ok })
+}
+
 #[tauri::command(rename = "ai:ttsSpeech")]
 pub async fn tts_speech(text: String, opts: Option<Value>) -> Result<Value, String> {
     let text = text.trim().to_string();
@@ -70,10 +118,7 @@ pub async fn tts_speech(text: String, opts: Option<Value>) -> Result<Value, Stri
             rate,
             volume: 0,
         };
-        let mut client = connect().map_err(|e| format!("Edge TTS 连接失败：{e}"))?;
-        let audio = client
-            .synthesize(&text, &config)
-            .map_err(|e| format!("Edge TTS 合成失败：{e}"))?;
+        let audio = synth(&text, &config)?;
         if audio.audio_bytes.is_empty() {
             return Err("Edge TTS 返回空音频".into());
         }
