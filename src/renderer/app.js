@@ -1203,7 +1203,12 @@ function bindWallpaperPanel() {
 function bindTopbar() {
   updateTopUser();
   $('top-user').onclick = () => renderPage('account');
-  $('top-browser').onclick = () => api.browserOpen();
+  $('top-browser').onclick = () => {
+    Promise.resolve(api.browserOpen()).catch((e) => {
+      toast('内置浏览器没打开，已改用系统浏览器：' + (e && e.message ? e.message : e), true);
+      try { api.openUrl('https://www.mcmod.cn/'); } catch (e2) { /* ignore */ }
+    });
+  };
   // top-ai 按钮改回 JS 绑定：HTML 内联 onclick 会被 CSP script-src 'self' 拦截，导致点了没反应
   $('top-ai').onclick = () => openAI();
   $('top-launch').onclick = () => {
