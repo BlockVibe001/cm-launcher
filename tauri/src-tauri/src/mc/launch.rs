@@ -54,12 +54,13 @@ fn filter_args(args: Option<&Value>, features: Option<&Value>) -> Vec<String> {
     out
 }
 
-/// quickPlay 仅 1.20+
+/// quickPlay 仅 1.20+；版本 ID 可能是 fabric-loader-x-1.20.1 / forge-1.20.1 这类组合名
 fn supports_quick_play(version_id: &str) -> bool {
-    regex::Regex::new(r"^1\.(\d+)")
-        .unwrap()
-        .captures(version_id)
-        .and_then(|c| c[1].parse::<i64>().ok())
+    version_id
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|p| p.starts_with("1."))
+        .and_then(|p| p.split('.').nth(1))
+        .and_then(|minor| minor.parse::<i64>().ok())
         .map(|minor| minor >= 20)
         .unwrap_or(false)
 }
