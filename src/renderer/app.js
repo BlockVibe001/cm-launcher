@@ -286,6 +286,32 @@ function loadFeatureScripts() {
   setTimeout(next, 50);
 }
 
+/** 首次启动：游戏文件默认落在 C 盘，让玩家先选自己想放的盘 */
+async function maybeChooseGameDir() {
+  const c = state.config || {};
+  if (c.gameDirPicked === true) return;
+  // 已经在别的盘就不打扰，只提醒默认 C 盘的新用户
+  if (c.gameDir && !/^[cC]:/.test(String(c.gameDir))) {
+    await api.configUpdate({ gameDirPicked: true }).catch(() => {});
+    return;
+  }
+  const go = await askChoice('选择游戏文件存放位置', [
+    { value: 'pick', label: '选择其他盘（推荐）', desc: '版本、模组、存档都会放在你选的目录，不会占用 C 盘空间；后面设置里也能随时改。' },
+    { value: 'default', label: '先用默认 C 盘', desc: '以后想换可在设置 → 游戏目录里点“浏览”迁移。' },
+  ]);
+  if (go === 'pick') {
+    const dir = await api.pickDir();
+    if (dir) {
+      await api.configUpdate({ gameDir: dir, gameDirPicked: true });
+      state.config = await api.configGetAll();
+      toast(`游戏目录已设为 ${dir}`);
+    }
+  } else {
+    await api.configUpdate({ gameDirPicked: true });
+    state.config = { ...c, gameDirPicked: true };
+  }
+}
+
 async function init() {
   state.config = await api.configGetAll();
   applyNotifyOffset(state.config.notifyOffsetY);
@@ -329,6 +355,9 @@ async function init() {
   updateTopUser();
 
   renderPage('home');
+
+  // 首次启动让玩家自己选游戏目录，避免默认全塞进 C 盘
+  setTimeout(maybeChooseGameDir, 700);
 
   // 功能扩展脚本不参与首屏：等窗口画出来后再按原顺序异步加载，
   // 首屏可交互时间因此不再包含这十几个文件的解析/执行。
@@ -18482,30 +18511,14 @@ function renderSettings(page) {
         <div class="hint-text" id="up-channel-hint"></div>
       </div>
       <div class="field">
-        <label>正式版更新地址</label>
-        <input class="input" id="up-url-stable" placeholder="https://api.github.com/repos/BlockVibe001/cm-launcher/releases/latest">
+        <label>当前通道更新地址</label>
+        <input class="input" id="up-url" readonly>
         <div class="row" style="gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap">
-          <span class="hint-text" id="up-dir-stable">本机更新源：读取中…</span>
-          <button class="btn sm" id="up-open-stable" type="button">打开「更新源 / 正式」</button>
+          <span class="hint-text" id="up-dir">本机更新源：读取中…</span>
+          <button class="btn sm" id="up-open-dir" type="button">打开本机更新源</button>
         </div>
       </div>
-      <div class="field">
-        <label>测试版更新地址</label>
-        <input class="input" id="up-url-beta" placeholder="https://api.github.com/repos/BlockVibe001/cm-launcher/releases?per_page=100">
-        <div class="row" style="gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap">
-          <span class="hint-text" id="up-dir-beta">本机更新源：读取中…</span>
-          <button class="btn sm" id="up-open-beta" type="button">打开「更新源 / 测试」</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>安卓专用更新地址</label>
-        <input class="input" id="up-url-android" placeholder="https://api.github.com/repos/BlockVibe001/cm-launcher/releases?per_page=100">
-        <div class="row" style="gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap">
-          <span class="hint-text" id="up-dir-android">本机更新源：读取中…</span>
-          <button class="btn sm" id="up-open-android" type="button">打开「更新源 / 安卓」</button>
-        </div>
-      </div>
-      <div class="hint-text" style="margin-top:-4px">三个地址互不影响。安卓专用通道只认 .apk 和 -android.N 版号，不会把安卓包当成 Windows 更新；目录里放 update.json 就优先用本机更新源。当前版本 <b id="up-cur">—</b>。</div>
+      <div class="hint-text" style="margin-top:-4px">更新地址跟着通道自动切换，不需要手填。安卓专用通道只认 .apk 和 -android.N 版号，不会把安卓包当成 Windows 更新；目录里放 update.json 就优先用本机更新源。当前版本 <b id="up-cur">—</b>。</div>
       <label class="ui-check"><input type="checkbox" id="up-auto"> 启动时自动检查更新（6 小时内只查一次）</label>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">
         <button class="btn primary" id="up-check" type="button">检查更新</button>
@@ -19851,47 +19864,35 @@ function renderSettings(page) {
     const s = String(v || '').trim();
     return /releases\/latest\/download\/update\.json/i.test(s) ? fallback : (s || fallback);
   };
-  const savedStableUrl = up.urlStable || up.url || '';
-  const savedBetaUrl = up.urlBeta || '';
-  const savedAndroidUrl = up.urlAndroid || '';
-  $('up-url-stable').value = cleanUrl(savedStableUrl, DEFAULT_UPDATE_URL);
-  $('up-url-beta').value = cleanUrl(savedBetaUrl, DEFAULT_UPDATE_URL_BETA);
-  if ($('up-url-android')) $('up-url-android').value = cleanUrl(savedAndroidUrl, DEFAULT_UPDATE_URL_ANDROID);
+  const upUrls = {
+    stable: cleanUrl(up.urlStable || up.url, DEFAULT_UPDATE_URL),
+    beta: cleanUrl(up.urlBeta, DEFAULT_UPDATE_URL_BETA),
+    android: cleanUrl(up.urlAndroid, DEFAULT_UPDATE_URL_ANDROID),
+  };
   $('up-auto').checked = up.autoCheck !== false;
+  let upChannel = normalizeUpdateChannel(up.channel);
 
-  // 本机更新源目录：正式 / 测试 / 安卓 各一个，界面直接显示真实路径
+  // 本机更新源目录：当前通道显示真实路径，按钮只打开当前通道
   let updateSources = { stable: {}, beta: {}, android: {} };
-  const paintSourceDirs = () => {
-    const s = updateSources.stable || {};
-    const b = updateSources.beta || {};
-    const a = updateSources.android || {};
-    if ($('up-dir-stable')) $('up-dir-stable').textContent = `本机更新源：${s.dir || '读取中…'}`;
-    if ($('up-dir-beta')) $('up-dir-beta').textContent = `本机更新源：${b.dir || '读取中…'}`;
-    if ($('up-dir-android')) $('up-dir-android').textContent = `本机更新源：${a.dir || '读取中…'}`;
+  const paintSourceDir = () => {
+    const s = updateSources[upChannel] || {};
+    if ($('up-dir')) $('up-dir').textContent = `本机更新源：${s.dir || '读取中…'}`;
   };
   api.updateSourceInfo().then((info) => {
     updateSources = info || updateSources;
-    paintSourceDirs();
+    paintSourceDir();
   }).catch(() => {
-    if ($('up-dir-stable')) $('up-dir-stable').textContent = '本机更新源：读取失败';
-    if ($('up-dir-beta')) $('up-dir-beta').textContent = '本机更新源：读取失败';
-    if ($('up-dir-android')) $('up-dir-android').textContent = '本机更新源：读取失败';
+    if ($('up-dir')) $('up-dir').textContent = '本机更新源：读取失败';
   });
-  const bindOpenDir = (id, channel) => {
-    const btn = $(id);
-    if (!btn) return;
-    btn.onclick = async () => {
+  if ($('up-open-dir')) {
+    $('up-open-dir').onclick = async () => {
       try {
-        const err = await api.updateOpenSourceDir(channel);
+        const err = await api.updateOpenSourceDir(upChannel);
         if (err) toast(`打开目录失败：${err}`, true);
       } catch (e) { toast(`打开目录失败：${e.message}`, true); }
     };
-  };
-  bindOpenDir('up-open-stable', 'stable');
-  bindOpenDir('up-open-beta', 'beta');
-  bindOpenDir('up-open-android', 'android');
+  }
 
-  let upChannel = normalizeUpdateChannel(up.channel);
   const upChannelBox = $('up-channel');
   const paintUpChannel = () => {
     if (!upChannelBox) return;
@@ -19900,6 +19901,8 @@ function renderSettings(page) {
       btn.classList.toggle('active', on);
       btn.setAttribute('aria-selected', on ? 'true' : 'false');
     });
+    if ($('up-url')) $('up-url').value = upUrls[upChannel];
+    paintSourceDir();
     const hint = $('up-channel-hint');
     if (hint) {
       hint.textContent = upChannel === 'beta'
@@ -20133,22 +20136,24 @@ function renderSettings(page) {
   if (!githubLogCache) loadGithubLogs(false);
 
   $('up-save').onclick = async () => {
-    const urlStable = $('up-url-stable').value.trim() || DEFAULT_UPDATE_URL;
-    const urlBeta = $('up-url-beta').value.trim() || DEFAULT_UPDATE_URL_BETA;
-    const urlAndroid = ($('up-url-android') ? $('up-url-android').value.trim() : '') || DEFAULT_UPDATE_URL_ANDROID;
-    await api.configUpdate({ update: { urlStable, urlBeta, urlAndroid, autoCheck: $('up-auto').checked, channel: upChannel } });
+    await api.configUpdate({
+      update: {
+        urlStable: upUrls.stable,
+        urlBeta: upUrls.beta,
+        urlAndroid: upUrls.android,
+        autoCheck: $('up-auto').checked,
+        channel: upChannel,
+      },
+    });
     state.config = await api.configGetAll();
-    $('up-url-stable').value = urlStable;
-    $('up-url-beta').value = urlBeta;
-    if ($('up-url-android')) $('up-url-android').value = urlAndroid;
     paintUpChannel();
-    toast(`更新设置已保存（${updateChannelLabel(upChannel)}通道）`);
+    toast(`更新设置已保存（${updateChannelLabel(upChannel)}通道，地址自动跟随）`);
   };
 
   $('up-check').onclick = async () => {
-    const url = (upChannel === 'beta' ? $('up-url-beta').value.trim()
-      : upChannel === 'android' ? ($('up-url-android') ? $('up-url-android').value.trim() : '') : $('up-url-stable').value.trim())
-      || (upChannel === 'beta' ? DEFAULT_UPDATE_URL_BETA : upChannel === 'android' ? DEFAULT_UPDATE_URL_ANDROID : DEFAULT_UPDATE_URL);
+    const url = $('up-url').value.trim()
+      || (upChannel === 'beta' ? DEFAULT_UPDATE_URL_BETA
+        : upChannel === 'android' ? DEFAULT_UPDATE_URL_ANDROID : DEFAULT_UPDATE_URL);
     const btn = $('up-check');
     btn.disabled = true;
     btn.textContent = '检查中…';
