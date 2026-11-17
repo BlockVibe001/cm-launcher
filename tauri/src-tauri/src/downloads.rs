@@ -78,6 +78,20 @@ pub fn emit_changed(app: &AppHandle) {
     let _ = app.emit(crate::events::EV_DOWNLOADS_CHANGED, Value::Array(list));
 }
 
+/// emit downloads:progress（单任务进度，给前端下载胶囊用）
+fn emit_progress(app: &AppHandle, id: &str) {
+    let state = app.state::<DownloadsState>();
+    let task = {
+        let g = state.tasks.lock().unwrap();
+        g.iter()
+            .find(|t| t.get("id").and_then(Value::as_str) == Some(id))
+            .map(clean)
+    };
+    if let Some(t) = task {
+        let _ = app.emit("downloads:progress", t);
+    }
+}
+
 /// 从磁盘加载历史任务（未收尾的标记 failed「应用已退出」）；延迟到首次使用时调用
 pub fn ensure_loaded(state: &DownloadsState) {
     if LOADED.swap(true, Ordering::SeqCst) {
@@ -352,6 +366,7 @@ async fn run_download(state: &DownloadsState, app: &AppHandle, id: &str, opts: &
                     &json!({"received": received, "speed": speed, "percent": percent}),
                 );
                 emit_changed(app);
+                emit_progress(app, id);
                 last_emit = now;
                 last_bytes = received;
                 last_time = now;

@@ -72,6 +72,11 @@ fn versions_installed(game_dir: Option<String>) -> Vec<String> {
     mc::version::list_installed(game_dir.as_deref())
 }
 
+#[tauri::command(rename = "versions:sizes")]
+async fn versions_sizes(ids: Vec<String>) -> Value {
+    mc::version::sizes(ids).await
+}
+
 #[tauri::command(rename = "versions:download")]
 async fn versions_download(
     mc_version: String,
@@ -282,13 +287,31 @@ fn log_history() -> Vec<logger::LogEntry> {
 // ================= 启动器自更新 =================
 
 #[tauri::command(rename = "update:version")]
-fn update_version() -> Value {
-    json!({ "version": updater::version(), "portable": false })
+fn update_version(app: tauri::AppHandle) -> Value {
+    // 用 Tauri 读取的包版本，Android 平台配置覆盖 1.0.68-android.0 后会返回安卓专用版号
+    json!({ "version": app.package_info().version.to_string(), "portable": false })
 }
 
 #[tauri::command(rename = "update:check")]
-async fn update_check(url: String) -> CmdResult<Value> {
-    updater::check(&url).await
+async fn update_check(app: tauri::AppHandle, url: String, channel: Option<String>) -> CmdResult<Value> {
+    updater::check(&app, &url, channel).await
+}
+
+#[tauri::command(rename = "update:releases")]
+async fn update_releases(force: Option<bool>) -> Value {
+    let _ = force;
+    updater::releases().await
+}
+
+#[tauri::command(rename = "update:changelog")]
+async fn update_changelog(platform: Option<String>, force: Option<bool>) -> Value {
+    let _ = force;
+    updater::changelog(platform).await
+}
+
+#[tauri::command(rename = "update:sourceInfo")]
+fn update_source_info() -> Value {
+    updater::source_info()
 }
 
 #[tauri::command(rename = "update:download")]
@@ -612,6 +635,7 @@ fn main() {
             config_update,
             versions_manifest,
             versions_installed,
+            versions_sizes,
             versions_download,
             java_list,
             java_required,
@@ -644,6 +668,9 @@ fn main() {
             log_history,
             update_version,
             update_check,
+            update_releases,
+            update_changelog,
+            update_source_info,
             update_download,
             update_install,
             update_open,
@@ -754,6 +781,7 @@ fn main() {
             downloads::downloads_open_dir,
             ai::ai_providers,
             ai::ai_test,
+            ai::ai_chat,
             ai::ai_translate,
             dnd::dnd_inspect,
             dnd::dnd_import,

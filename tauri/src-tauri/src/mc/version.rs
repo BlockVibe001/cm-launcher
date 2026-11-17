@@ -169,3 +169,52 @@ pub fn list_installed(game_dir: Option<&str>) -> Vec<String> {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect()
 }
+
+/// 批量补版本体积（bytes）：读各版本 json 的 downloads.client.size，最多 6 路并发。
+pub async fn sizes(ids: Vec<String>) -> Value {
+    let mut list: Vec<String> = Vec::new();
+    for id in ids {
+        if !list.contains(&id) { list.push(id); }
+    }
+    let cache_path = crate::config::user_data_dir().join("version-sizes.json");
+    let mut cache: serde_json::Map<String, Value> = std::fs::read_to_string(&cache_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    let mut todo: Vec<(String, String)> = Vec::new();
+    let manifest = get_manifest(false).await.ok();
+    let entries = manifest.as_ref().and_then(|m| m.get("versions")).and_then(Value::as_array);
+    for id in &list {
+        if let Some(v) = cache.get(id) {
+            out.insert(id.clone(), v.clone());
+            continue;
+        }
+        let url = entries
+            .and_then(|a| a.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(id.as_str())))
+            .and_then(|v| v.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !url.is_empty() { todo.push((id.clone(), url)); }
+    }
+    use futures_util::StreamExt;
+    let results = futures_util::stream::iter(todo.into_iter().map(|(id, url)| async move {
+        let detail = match HTTP.get(mirror_url(&url)).send().await {
+            Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+            _ => None,
+        };
+        let size = detail
+            .and_then(|d| d.get("downloads").and_then(|x| x.get("client")).and_then(|x| x.get("size")).and_then(Value::as_u64))
+            .unwrap_or(0);
+        (id, size)
+    })).buffer_unordered(6).collect::<Vec<_>>().await;
+    for (id, size) in results {
+        if size > 0 {
+            out.insert(id.clone(), json!(size));
+            cache.insert(id, json!(size));
+        }
+    }
+    if let Ok(s) = serde_json::to_string(&cache) { let _ = std::fs::write(cache_path, s); }
+    Value::Object(out)
+}

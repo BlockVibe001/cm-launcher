@@ -15,7 +15,18 @@
   const isNotImpl = (e) => /not found|unknown|not implemented/i.test(String((e && e.message) || e));
 
   // 未迁移通道的默认返回值（按通道名）。已全部实现或移除调用，暂无兜底条目。
-  const STUBS = {};
+  const STUBS = {
+    // 一键开服是 Electron 主进程能力；Tauri 端由 feat_server.js 提供自己的管理台，
+    // 联机大厅卡片里的查询类调用在 Tauri 下落空值，保证页面正常渲染。
+    'msrv:list': () => [],
+    'msrv:types': () => ({ types: [] }),
+    'msrv:logs': () => ({ lines: [], live: false }),
+    'msrv:addr': () => [],
+    'msrv:mods': () => ({ dir: '', loader: null, items: [] }),
+    'msrv:mod:search': () => [],
+    'msrv:mod:files': () => [],
+    'msrv:shader:search': () => [],
+  };
 
   const call = (channel, args) => invoke(channel, args).catch((e) => {
     if (isNotImpl(e) && Object.prototype.hasOwnProperty.call(STUBS, channel)) {
@@ -79,11 +90,12 @@
 
     // 版本
     versionsManifest: (force) => call('versions:manifest', { force }),
+    versionsSizes: (ids) => call('versions:sizes', { ids }),
     versionsInstalled: (gameDir) => call('versions:installed', { gameDir }),
     versionsDownload: (mcVersion, gameDir) => call('versions:download', { mcVersion, gameDir }),
 
     // Java
-    javaList: () => call('java:list'),
+    javaList: (force) => call('java:list', !!force),
     javaPick: () => call('java:pick'),
     javaRequired: (mcVersion) => call('java:required', { mcVersion }),
     javaMatch: (mcVersion) => call('java:match', { mcVersion }),
@@ -118,11 +130,15 @@
     contentResourcePackToggle: (gameDir, name, on2) => call('content:resourcepack:toggle', { gameDir, name, on: on2 }),
     contentShaders: (gameDir) => call('content:shaders', { gameDir }),
     contentShaderEnable: (gameDir, name) => call('content:shader:enable', { gameDir, name }),
+    contentShaderReorder: (gameDir, name, dir) => call('content:shader:reorder', { gameDir, name, dir }),
+    contentShaderSettings: (gameDir) => call('content:shader:settings', { gameDir }),
+    contentShaderSet: (gameDir, key, value) => call('content:shader:set', { gameDir, key, value }),
     contentSaves: (gameDir) => call('content:saves', { gameDir }),
     contentScreenshots: (gameDir) => call('content:screenshots', { gameDir }),
     contentLogs: (gameDir) => call('content:logs', { gameDir }),
     contentLogRead: (gameDir, rel) => call('content:log:read', { gameDir, rel }),
     contentDelete: (gameDir, category, name) => call('content:delete', { gameDir, category, name }),
+    contentFixChinese: (gameDir) => call('content:fixChinese', { gameDir }),
 
     // 存档
     worldList: (gameDir) => call('world:list', { gameDir }),
@@ -151,7 +167,11 @@
     // AI / 翻译
     aiProviders: () => call('ai:providers'),
     aiTest: (cfg) => call('ai:test', { cfg }),
+    aiChat: (cfg) => call('ai:chat', { cfg }),
     aiTranslate: (cfg, text, targetLang) => call('ai:translate', { cfg, text, targetLang }),
+    aiSpeechToText: (cfg, audioBuffer) => call('ai:speechToText', { cfg, audioBuffer }),
+    aiFetchUrl: (url, maxChars) => call('ai:fetchUrl', { url, maxChars }),
+    aiLogPath: () => call('ai:logPath'),
 
     // Mod 更新 / 回滚
     modsCheckUpdates: (gameDir, mcVersion, loader) => call('mods:checkUpdates', { gameDir, mcVersion, loader }),
@@ -184,6 +204,8 @@
     cfWorldInstall: (file, gameDir) => call('search:curseforge:world', { file, gameDir }),
     mrSearch: (query, mcVersion, modLoader, projectType) =>
       call('search:modrinth', { query, mcVersion, modLoader, projectType }),
+    mrSearchPage: (query, mcVersion, modLoader, projectType, offset) =>
+      call('search:modrinth:page', { query, mcVersion, modLoader, projectType, offset }),
     mrVersions: (projectId, mcVersion, modLoader) => call('search:modrinth:versions', { projectId, mcVersion, modLoader }),
     mrProject: (projectId) => call('search:modrinth:project', { projectId }),
     mrDownload: (file, gameDir, projectType) => call('search:modrinth:download', { file, gameDir, projectType }),
@@ -193,6 +215,8 @@
     launch: (instanceId, extra) => call('game:launch', { instanceId, extra }),
     cancel: () => call('game:cancel'),
     running: () => call('game:running'),
+    verify: (instanceId) => call('game:verify', { instanceId }),
+    mirrorHealth: () => call('mirror:health'),
 
     // 首页桌面
     homeNews: (force) => call('home:news', { force }),
@@ -232,6 +256,11 @@
     downloadsClear: () => call('downloads:clear'),
     downloadsOpenDir: () => call('downloads:openDir'),
     onDownloadsChanged: on('downloads:changed'),
+    onDownloadsProgress: on('downloads:progress'),
+    onDownloadConcurrency: on('download:concurrency'),
+    onGameCrash: on('game:crash'),
+    onAiStreamEvent: on('ai:chatStream:event'),
+    onAiAgentEvent: on('ai:agent:event'),
 
     // 内置浏览器
     browserOpen: (url) => call('browser:open', { url }),
@@ -245,7 +274,7 @@
     // 联机助手
     lanDetect: () => call('lan:detect'),
     lanIps: () => call('lan:ips'),
-    lanSetPath: (id, p, name) => call('lan:setPath', { id, p, name }),
+    lanSetPath: (id, p, name, opts) => call('lan:setPath', { id, p, name, opts }),
     lanLaunch: (id) => call('lan:launch', { id }),
     lanInstall: (id, file) => call('lan:install', { id, file }),
     lanFetch: (id) => call('lan:fetch', { id }),
@@ -275,9 +304,83 @@
     easytierLeave: () => call('easytier:leave'),
     onEasytierState: on('easytier:state'),
 
+    // 一键开服（独立服务端；Tauri 端查询走 STUBS 兜底）
+    msrvList: () => call('msrv:list'),
+    msrvTypes: (mcVersion) => call('msrv:types', { mcVersion }),
+    msrvCreate: (opts) => call('msrv:create', { opts }),
+    msrvStart: (id) => call('msrv:start', { id }),
+    msrvStop: (id) => call('msrv:stop', { id }),
+    msrvInput: (id, line) => call('msrv:input', { id, line }),
+    msrvProps: (id) => call('msrv:props:get', { id }),
+    msrvPropsSet: (id, patch) => call('msrv:props:set', { id, patch }),
+    msrvUpdate: (id, patch) => call('msrv:update', { id, patch }),
+    msrvDelete: (id, deleteFiles) => call('msrv:delete', { id, deleteFiles }),
+    msrvLogs: (id, lines) => call('msrv:logs', { id, lines }),
+    msrvAddr: (port) => call('msrv:addr', { port }),
+    msrvMods: (id) => call('msrv:mods', { id }),
+    msrvModEnable: (id, name, enabled) => call('msrv:mod:enable', { id, name, enabled }),
+    msrvModDelete: (id, name) => call('msrv:mod:delete', { id, name }),
+    msrvModImport: (id, filePath) => call('msrv:mod:import', { id, filePath }),
+    msrvModSearch: (id, query) => call('msrv:mod:search', { id, query }),
+    msrvModFiles: (id, projectId) => call('msrv:mod:files', { id, projectId }),
+    msrvModInstall: (id, file) => call('msrv:mod:install', { id, file }),
+    msrvPackExport: (id, opts) => call('msrv:pack:export', { id, opts }),
+    msrvShaderSearch: (query, mcVersion) => call('msrv:shader:search', { query, mcVersion }),
+    msrvShaderInstall: (file, instanceId) => call('msrv:shader:install', { file, instanceId }),
+    onMsrvProgress: on('msrv:progress'),
+    onMsrvState: on('msrv:state'),
+    onMsrvLog: on('msrv:log'),
+
+    // 基岩版：非 Electron 环境无法检测本机 Store 应用
+    bedrockStatus: () => Promise.resolve({ supported: false, installed: false, stable: null, preview: null, packages: [] }),
+    bedrockLaunch: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
+    bedrockOpenStore: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
+    bedrockOpenSaves: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
+    bedrockInstallPackage: () => Promise.resolve({ ok: false, error: '当前环境不支持基岩版' }),
+
+    // Horizon：非 Electron 适配层没有主进程下载权限
+    horizonReleases: () => Promise.resolve({ total: 0, releases: [] }),
+    horizonDownload: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
+    horizonOpenDir: () => Promise.resolve({ ok: false, error: '当前环境不支持 Horizon 下载' }),
+
+    // 插件系统：非 Electron 适配层拿不到主进程，按「无插件」降级
+    pluginsList: () => Promise.resolve([]),
+    pluginsToggle: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    pluginsRunCommand: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    pluginsRunEntry: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    pluginsReload: () => Promise.resolve([]),
+    pluginsInstallSample: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    pluginsOpenDir: () => Promise.resolve({ ok: false, error: '当前环境不支持插件' }),
+    onPluginNotify: on('plugin:notify'),
+
+    // 云同步：非 Electron 适配层没有主进程文件系统权限，整体降级为不可用
+    syncGet: () => Promise.resolve({ url: '', username: '', includeSaves: false, lastSyncAt: 0, hasPassword: false }),
+    syncSave: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+    syncTest: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+    syncRun: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+    syncResolve: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+    syncUploadSaves: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+    syncDownloadSaves: () => Promise.resolve({ ok: false, error: '当前环境不支持云同步' }),
+
+    // 云端备份：非 Electron 环境没有 WebDAV 与本地文件能力
+    cloudBackupStatus: () => Promise.resolve({ ok: false, error: '当前环境不支持云端备份', enabled: false }),
+    cloudBackupEnable: () => Promise.resolve({ ok: false, error: '当前环境不支持云端备份' }),
+    cloudBackupCreate: () => Promise.resolve({ ok: false, error: '当前环境不支持云端备份' }),
+    cloudBackupList: () => Promise.resolve({ ok: false, error: '当前环境不支持云端备份' }),
+    cloudBackupRestore: () => Promise.resolve({ ok: false, error: '当前环境不支持云端备份' }),
+
+    // 好友分享：需要主进程读写实例与模组目录
+    friendsExport: () => Promise.resolve({ ok: false, error: '当前环境不支持好友分享' }),
+    friendsDecode: () => Promise.resolve({ ok: false, error: '当前环境不支持好友分享' }),
+    friendsImport: () => Promise.resolve({ ok: false, error: '当前环境不支持好友分享' }),
+    friendsOpenFile: () => Promise.resolve({ ok: false, error: '当前环境不支持好友分享' }),
+
     // 自更新：用户没填地址时回落到官方 Release 清单（GitHub 的 latest 下载路由）
     updaterVersion: () => call('update:version'),
-    updaterCheck: (url) => call('update:check', { url: url || 'https://github.com/BlockVibe001/cm-launcher/releases/latest/download/update.json' }),
+    updaterCheck: (url, channel) => call('update:check', { url: url || 'https://api.github.com/repos/BlockVibe001/cm-launcher/releases/latest', channel: channel || 'stable' }),
+    updateSourceInfo: () => call('update:sourceInfo'),
+    updaterReleases: (force) => call('update:releases', { force: !!force }),
+    updaterChangelog: (force, platform) => call('update:changelog', { force: !!force, platform: platform || 'windows' }),
     updaterDownload: (manifest) => call('update:download', { manifest }),
     updaterInstall: (p) => call('update:install', { p }),
     updaterOpen: (url) => call('update:open', { url }),
@@ -285,7 +388,7 @@
 
     // 内存管理
     memoryInfo: () => call('memory:info'),
-    memoryRecommend: () => call('memory:recommend'),
+    memoryRecommend: (opts) => call('memory:recommend', { opts }),
     memoryClean: (level) => call('memory:clean', { level }),
     gameDirChange: (dir, move) => call('gameDir:change', { dir, move }),
 
