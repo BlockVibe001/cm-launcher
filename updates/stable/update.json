@@ -1,11 +1,11 @@
 {
-  "version": "1.0.89",
+  "version": "1.0.90",
   "channel": "stable",
   "platform": "windows",
-  "publishedAt": "2026-11-21T15:00:00Z",
-  "notes": "正式版：MCP 新增 Streamable HTTP / 旧版 SSE 远程连接与自定义请求头；新增可视化动画工作室（时间轴 + 10 套模板 + 实时预览）。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.89/nebula-launcher-setup-1.0.89.exe",
-  "installerName": "nebula-launcher-setup-1.0.89.exe",
-  "sha256": "572D05E2DF57667FDE10471C095B227679236D81A1D975DC3ABD32773EB037F1",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.89"
+  "publishedAt": "2026-11-21T15:38:47Z",
+  "notes": "正式版：MCP 工具调用改为应用内确认页，可查看命令与参数；动画工作室新增文字/图片图层和关键帧时间轴，旧主题继续兼容。",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.90/nebula-launcher-setup-1.0.90.exe",
+  "installerName": "nebula-launcher-setup-1.0.90.exe",
+  "sha256": "27632FEE08499D33FD7A41E905596E3B756BB8FDA4B28D335929D1EAE90520D9",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.90"
 }
