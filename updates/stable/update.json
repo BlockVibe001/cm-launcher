@@ -1,11 +1,11 @@
 {
-  "version": "1.0.88",
+  "version": "1.0.89",
   "channel": "stable",
   "platform": "windows",
-  "publishedAt": "2026-11-21T00:00:00Z",
-  "notes": "正式版：更新通道拆成三个独立目录；手机版支持应用内检查更新和 APK 安装。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.88/nebula-launcher-setup-1.0.88.exe",
-  "installerName": "nebula-launcher-setup-1.0.88.exe",
-  "sha256": "7B3403DCA276775F9EAF5E790E4E88C114C3AE26420084B9EF28884A83D47CA4",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.88"
+  "publishedAt": "2026-11-21T15:00:00Z",
+  "notes": "正式版：MCP 新增 Streamable HTTP / 旧版 SSE 远程连接与自定义请求头；新增可视化动画工作室（时间轴 + 10 套模板 + 实时预览）。",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.89/nebula-launcher-setup-1.0.89.exe",
+  "installerName": "nebula-launcher-setup-1.0.89.exe",
+  "sha256": "572D05E2DF57667FDE10471C095B227679236D81A1D975DC3ABD32773EB037F1",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.89"
 }
