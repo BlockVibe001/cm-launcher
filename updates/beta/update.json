@@ -1,11 +1,11 @@
 {
-  "version": "1.0.90",
+  "version": "1.0.91",
   "channel": "beta",
   "platform": "windows",
-  "publishedAt": "2026-11-21T15:38:47Z",
-  "notes": "测试版：与正式版同构建 1.0.90，重点验证 MCP 工具确认页和图层关键帧。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.90/nebula-launcher-setup-1.0.90.exe",
-  "installerName": "nebula-launcher-setup-1.0.90.exe",
-  "sha256": "27632FEE08499D33FD7A41E905596E3B756BB8FDA4B28D335929D1EAE90520D9",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.90"
+  "publishedAt": "2026-11-21T16:11:34Z",
+  "notes": "测试版：与正式版同构建 1.0.91，功能与 1.0.90 一致。",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.91/nebula-launcher-setup-1.0.91.exe",
+  "installerName": "nebula-launcher-setup-1.0.91.exe",
+  "sha256": "18A139C43CE1306475105AD0C8616C9CB1099D18FF4ADBAD50637256926D5B02",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.91"
 }
