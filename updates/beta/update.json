@@ -1,11 +1,11 @@
 {
-  "version": "1.0.88",
+  "version": "1.0.89",
   "channel": "beta",
   "platform": "windows",
-  "publishedAt": "2026-11-21T00:00:00Z",
-  "notes": "测试版目录：当前先指向 1.0.88 同一构建；以后测试包只替换本目录的 update.json，不影响正式版。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.88/nebula-launcher-setup-1.0.88.exe",
-  "installerName": "nebula-launcher-setup-1.0.88.exe",
-  "sha256": "7B3403DCA276775F9EAF5E790E4E88C114C3AE26420084B9EF28884A83D47CA4",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.88"
+  "publishedAt": "2026-11-21T15:00:00Z",
+  "notes": "测试版：当前指向 1.0.89 同一构建；重点验证 MCP HTTP/SSE 远程连接和动画工作室。",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.89/nebula-launcher-setup-1.0.89.exe",
+  "installerName": "nebula-launcher-setup-1.0.89.exe",
+  "sha256": "572D05E2DF57667FDE10471C095B227679236D81A1D975DC3ABD32773EB037F1",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.89"
 }
