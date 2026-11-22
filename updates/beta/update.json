@@ -1,11 +1,11 @@
 {
-  "version": "1.0.92",
-  "channel": "beta",
   "platform": "windows",
-  "publishedAt": "2026-11-22T06:06:31Z",
-  "notes": "测试版：与正式版同构建 1.0.92，重点验证程序图标、任务栏图标和快捷方式显示。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.92/nebula-launcher-setup-1.0.92.exe",
-  "installerName": "nebula-launcher-setup-1.0.92.exe",
-  "sha256": "0791915010DAF9645254E16FCB10E359A091293D56CBF87DA29E9167E92FBEC5",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.92"
+  "installerName": "nebula-launcher-setup-1.0.93.exe",
+  "sha256": "BF6C85E130FB801E4BFAE4FC8F4437218B686F6DEBB0350C9163C2592E77B00A",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.93",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.93/nebula-launcher-setup-1.0.93.exe",
+  "channel": "beta",
+  "version": "1.0.93",
+  "publishedAt": "2026-11-22T10:24:40Z",
+  "notes": "测试版：与正式版同构建 1.0.93，重点验证 Npcap 检测、联机提示和许可证页。"
 }
