@@ -1,0 +1,11 @@
+{
+  "platform": "windows",
+  "installerName": "nebula-launcher-setup-1.0.93.exe",
+  "sha256": "BF6C85E130FB801E4BFAE4FC8F4437218B686F6DEBB0350C9163C2592E77B00A",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.93",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.93/nebula-launcher-setup-1.0.93.exe",
+  "channel": "stable",
+  "version": "1.0.93",
+  "publishedAt": "2026-11-22T10:24:40Z",
+  "notes": "第三方许可证与 Npcap 合规修复：补齐陶瓦 AGPL、EasyTier LGPL、WinDivert、Wintun 许可证；不再随包分发 Npcap 的 Packet.dll，改用系统已安装的 Npcap。"
+}
