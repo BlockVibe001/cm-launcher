@@ -1,7 +1,7 @@
 {
   "platform": "windows",
   "installerName": "nebula-launcher-setup-1.0.93.exe",
-  "sha256": "BF6C85E130FB801E4BFAE4FC8F4437218B686F6DEBB0350C9163C2592E77B00A",
+  "sha256": "23BAC3C22863B46048EA2021903607C07BC3B30E503068602A61F24E4793BA49",
   "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.93",
   "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.93/nebula-launcher-setup-1.0.93.exe",
   "channel": "beta",
