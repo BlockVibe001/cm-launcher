@@ -1,11 +1,11 @@
 {
   "platform": "windows",
-  "installerName": "nebula-launcher-setup-1.0.93.exe",
-  "sha256": "23BAC3C22863B46048EA2021903607C07BC3B30E503068602A61F24E4793BA49",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.93",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.93/nebula-launcher-setup-1.0.93.exe",
+  "installerName": "nebula-launcher-setup-1.0.94.exe",
+  "sha256": "3B337A454B9C2327808869EB56BABA1D911ABC2B4B405AE2208A49F065230D58",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.94",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.94/nebula-launcher-setup-1.0.94.exe",
   "channel": "beta",
-  "version": "1.0.93",
-  "publishedAt": "2026-11-22T10:24:40Z",
-  "notes": "测试版：与正式版同构建 1.0.93，重点验证 Npcap 检测、联机提示和许可证页。"
+  "version": "1.0.94",
+  "publishedAt": "2026-11-22T12:04:40Z",
+  "notes": "首次启动改为四步开机向导：引导 Java 检查与下载、内存推荐、游戏目录 / 外观 / 开机自启设置；首次向导不再和旧的新手引导叠加。"
 }
