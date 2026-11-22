@@ -1,11 +1,11 @@
 {
-  "version": "1.0.91",
+  "version": "1.0.92",
   "channel": "stable",
   "platform": "windows",
-  "publishedAt": "2026-11-21T16:11:34Z",
-  "notes": "维护重打包：MCP 应用内确认页、动画图层关键帧保持 1.0.90 内容，功能无变化。",
-  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.91/nebula-launcher-setup-1.0.91.exe",
-  "installerName": "nebula-launcher-setup-1.0.91.exe",
-  "sha256": "18A139C43CE1306475105AD0C8616C9CB1099D18FF4ADBAD50637256926D5B02",
-  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.91"
+  "publishedAt": "2026-11-22T06:06:31Z",
+  "notes": "修复 Windows 程序图标与版本信息未写入 exe 的问题；桌面、任务栏和快捷方式不再显示 Electron 原子图标。",
+  "installer": "https://github.com/BlockVibe001/cm-launcher/releases/download/v1.0.92/nebula-launcher-setup-1.0.92.exe",
+  "installerName": "nebula-launcher-setup-1.0.92.exe",
+  "sha256": "0791915010DAF9645254E16FCB10E359A091293D56CBF87DA29E9167E92FBEC5",
+  "page": "https://github.com/BlockVibe001/cm-launcher/releases/tag/v1.0.92"
 }
