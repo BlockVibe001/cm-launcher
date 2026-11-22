@@ -9,8 +9,12 @@ Terracotta | 陶瓦联机
 作者：Burning_TNT
 仓库：https://github.com/burningtnt/Terracotta
 镜像：https://gitee.com/burningtnt/Terracotta
+对应源码标签：v0.4.2
+源码地址：https://github.com/burningtnt/Terracotta/tree/v0.4.2
+发布页：https://github.com/burningtnt/Terracotta/releases/tag/v0.4.2
 
 许可证：AGPL-3.0-or-later，附例外条款
+  - 许可证原文：同目录 LICENSE.txt（GNU AGPL v3，未经修改）
   - 例外条款①：允许把「未经修改的二进制」打包分发，而不受 AGPL 传染。
   - 例外条款②：通过其进程间通信接口（本机 HTTP API）交互时，
     必须在调用方界面明显处标识其版权信息（启动器已在联机页署名）。
@@ -19,9 +23,23 @@ Terracotta | 陶瓦联机
 --------
 terracotta-0.4.2-windows-x86_64.exe  官方 Windows x86_64 构建，未做任何修改
 VCRUNTIME140.DLL                     Visual C++ 运行库，必须与 exe 同目录
+LICENSE.txt                          AGPL-3.0 许可证原文
+说明与版权.txt                       本说明
 
 内置版本：v0.4.2
 配套 EasyTier：v2.5.0-terracotta.2
+官方包 SHA-256：07ebe139e3ca5f74576e58b1a96efe59abdfbe148d3f1a49bfdca8b6f70745f0
+内置 exe SHA-256：74c10568a7fea9c1d38cf8d2d4ca90baf1517f8e5a26c63d3349db70bc449796
 
 启动器只会用官方提供的命令行与 HTTP 接口（--hmcl 拿端口、/state 系列接口收发房间状态），
 不修改二进制，也不改动它的行为。
+
+可替换说明
+----------
+玩家可以在「联机 → 联机工具 → 陶瓦联机 → 指定」里选择自己的 terracotta.exe。
+替换版只要实现 --hmcl 端口文件与 /state、/state/scanning、/state/guesting、/state/ide
+接口，星云就能识别并联动；星云不做签名校验或额外锁死。
+协议细节见安装目录 docs/陶瓦联机替换说明.md。
+
+请注意：陶瓦是 AGPL-3.0-or-later，不是 LGPL-3.0。复制或修改陶瓦源码后，
+修改版会失去“未修改二进制”例外，须按 AGPL 提供对应源码；星云不采用该路线。

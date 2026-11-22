@@ -1,0 +1,8 @@
+星云启动器 · 内置 Node.js 运行时
+
+文件：node.exe
+说明：随启动器分发的 Node.js 运行时，用于启动部分辅助脚本。
+版权：Node.js contributors
+许可：MIT
+源码/许可：https://github.com/nodejs/node
+许可证原文：安装目录 third-party-licenses/node-LICENSE.txt

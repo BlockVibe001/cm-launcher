@@ -1,0 +1,8 @@
+星云启动器 · .NET 单文件组件
+
+文件：nebula-direct.exe
+说明：自研的 .NET 单文件小程序，随启动器分发；运行时会加载 .NET 运行时。
+.NET 运行时版权：.NET Foundation and Contributors
+许可：MIT
+源码/许可：https://github.com/dotnet/runtime
+许可证原文：安装目录 third-party-licenses/dotnet-runtime-LICENSE.txt

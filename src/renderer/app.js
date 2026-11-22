@@ -10,6 +10,92 @@ const ce = (tag, cls, html) => {
  * 通用说明弹窗：替代 alert，保持界面风格一致。
  * actions: [{ text, primary, onClick }]，不传就只有一个「关闭」。
  */
+/* ---------- MCP 工具调用：应用内确认页 ---------- */
+const mcpConfirmState = { active: false, queue: [] };
+
+function enqueueMcpConfirm(payload) {
+  if (!payload || !payload.id) return;
+  mcpConfirmState.queue.push(payload);
+  pumpMcpConfirm();
+}
+
+function pumpMcpConfirm() {
+  if (mcpConfirmState.active) return;
+  const payload = mcpConfirmState.queue.shift();
+  if (!payload) return;
+  mcpConfirmState.active = true;
+  showMcpConfirm(payload);
+}
+
+function showMcpConfirm(payload) {
+  const destructive = payload.destructive === true;
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal" style="width:min(620px,94vw);max-height:92vh;display:flex;flex-direction:column">
+      <div class="modal-title">MCP 工具调用确认</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 12px">
+        <span style="font-size:12px;padding:3px 8px;border-radius:999px;background:${destructive ? 'rgba(255,92,138,.14)' : 'rgba(80,220,160,.14)'};color:${destructive ? '#ff8a9e' : '#65e0a6'};border:1px solid ${destructive ? 'rgba(255,92,138,.35)' : 'rgba(80,220,160,.3)'}">
+          ${destructive ? '可能写入 / 执行 / 联网' : '只读工具'}
+        </span>
+        <span style="font-size:12.5px;color:var(--text-dim)">${escapeHtml(payload.serverName || payload.serverId || 'MCP server')}</span>
+      </div>
+      <div style="font-size:13px;line-height:1.75;margin-bottom:10px">
+        允许星云 AI 调用 <b style="color:var(--text)">${escapeHtml(payload.toolName || '')}</b>？
+      </div>
+      <div style="flex:1;min-height:0;overflow:auto;font-size:12.5px;line-height:1.75">
+        <div style="color:var(--text-dim)">${escapeHtml(payload.description || '该工具没有提供说明。')}</div>
+        <div style="margin-top:10px;color:var(--text-dim)">${payload.isHttp ? '连接地址' : '启动命令'}</div>
+        <div style="margin-top:3px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.05);word-break:break-all;font-family:ui-monospace,Consolas,monospace">${escapeHtml(payload.command || '')}</div>
+        <div style="margin-top:10px;color:var(--text-dim)">参数</div>
+        <pre style="margin:4px 0 0;padding:9px 10px;border-radius:8px;background:rgba(255,255,255,.05);white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:220px;overflow:auto">${escapeHtml(payload.argsText || '{}')}</pre>
+      </div>
+      <div style="margin-top:12px;font-size:12px;color:${destructive ? '#ff8a9e' : 'var(--text-dim)'}">
+        ${destructive ? '这个工具可能修改文件、执行命令或联网，每次调用都需要确认。' : '该工具声明为只读；勾选后本会话内不再询问。'}
+      </div>
+      <label style="display:${destructive ? 'none' : 'flex'};align-items:center;gap:8px;margin-top:9px;font-size:12.5px;color:var(--text-dim);cursor:pointer">
+        <input type="checkbox" id="mcp-confirm-remember"> 本会话不再询问 ${escapeHtml(payload.toolName || '')}
+      </label>
+      <div class="modal-actions">
+        <span id="mcp-confirm-count" style="margin-right:auto;font-size:12px;color:var(--text-dim)">120 秒后自动拒绝</span>
+        <button class="btn ghost" id="mcp-confirm-deny" type="button">拒绝</button>
+        <button class="btn primary" id="mcp-confirm-allow" type="button">允许一次</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  let closed = false;
+  let left = 120;
+  const countEl = mask.querySelector('#mcp-confirm-count');
+  const timer = setInterval(() => {
+    left -= 1;
+    if (countEl) countEl.textContent = `${Math.max(0, left)} 秒后自动拒绝`;
+  }, 1000);
+  const finish = (allow, remember) => {
+    if (closed) return;
+    closed = true;
+    clearInterval(timer);
+    document.removeEventListener('keydown', onKey, true);
+    try { api.mcpConfirmReply(payload.id, { ok: allow, remember: allow && remember }); } catch { /* 主进程超时会兜底拒绝 */ }
+    mask.remove();
+    mcpConfirmState.active = false;
+    document.body.style.overflow = '';
+    pumpMcpConfirm();
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(false, false);
+    }
+  };
+  document.addEventListener('keydown', onKey, true);
+  document.body.style.overflow = 'hidden';
+  mask.querySelector('#mcp-confirm-allow').onclick = () => finish(true, !!(mask.querySelector('#mcp-confirm-remember') || {}).checked);
+  mask.querySelector('#mcp-confirm-deny').onclick = () => finish(false, false);
+  mask.onclick = (ev) => { if (ev.target === mask) finish(false, false); };
+  setTimeout(() => mask.querySelector('#mcp-confirm-deny').focus(), 50);
+}
+
 function infoModal(title, bodyHtml, actions) {
   const mask = ce('div', 'modal-mask');
   mask.innerHTML = `
@@ -569,6 +655,599 @@ const UI_OPTS = {
   ],
 };
 
+/** 启动动画设置：主题列表来自主进程扫描 userData/themes */
+const SPLASH_TEMPLATES = [
+  { name: '星云默认', timeline: [{ at: 0, effect: 'particles', preset: 'nebula' }, { at: 120, effect: 'fadeIn', target: 'title' }, { at: 650, effect: 'glow', target: 'art', durationMs: 1200 }] },
+  { name: '极简淡入', timeline: [{ at: 0, effect: 'fadeIn', target: 'title', durationMs: 800 }, { at: 700, effect: 'breath', target: 'art', durationMs: 1800 }] },
+  { name: '故障开机', timeline: [{ at: 0, effect: 'typewriter', target: 'title' }, { at: 180, effect: 'rgbSplit', durationMs: 700 }, { at: 520, effect: 'shake', durationMs: 500 }] },
+  { name: '粒子星河', timeline: [{ at: 0, effect: 'particles', preset: 'nebula' }, { at: 300, effect: 'glow', target: 'art', durationMs: 1600 }, { at: 900, effect: 'fadeIn', target: 'progress' }] },
+  { name: '硬核终端', timeline: [{ at: 0, effect: 'typewriter', target: 'title' }, { at: 300, effect: 'particles', preset: 'rain' }, { at: 800, effect: 'progress', target: 'progress', durationMs: 1200 }] },
+  { name: '柔光呼吸', timeline: [{ at: 0, effect: 'fadeIn', target: 'title', durationMs: 900 }, { at: 200, effect: 'breath', target: 'art', durationMs: 2200 }, { at: 700, effect: 'glow', target: 'art', durationMs: 1600 }] },
+  { name: '闪电开机', timeline: [{ at: 0, effect: 'rgbSplit', durationMs: 500 }, { at: 200, effect: 'shake', durationMs: 400 }, { at: 500, effect: 'burst', target: 'art' }] },
+  { name: '复古扫描', timeline: [{ at: 0, effect: 'slideIn', target: 'title', durationMs: 700 }, { at: 500, effect: 'progress', target: 'progress', durationMs: 1200 }, { at: 700, effect: 'particles', preset: 'starfield' }] },
+  { name: '深海上升', timeline: [{ at: 0, effect: 'slideIn', target: 'art', durationMs: 900 }, { at: 500, effect: 'blurIn', target: 'title', durationMs: 800 }, { at: 800, effect: 'particles', preset: 'snow' }] },
+  { name: '像素跃迁', timeline: [{ at: 0, effect: 'reveal', target: 'art', durationMs: 600 }, { at: 350, effect: 'shake', durationMs: 350 }, { at: 600, effect: 'particles', preset: 'starfield' }] },
+];
+
+const SPLASH_EFFECT_LIST = [
+  ['fadeIn', '淡入'], ['slideIn', '滑入'], ['blurIn', '模糊聚焦'], ['reveal', '显影'],
+  ['glow', '光晕'], ['breath', '呼吸'], ['shake', '抖动'], ['rgbSplit', '色差'],
+  ['typewriter', '打字机'], ['particles', '粒子'], ['progress', '进度脉冲'], ['burst', '粒子爆点'],
+  ['ripple', '点击涟漪'], ['easteregg', '彩蛋'],
+];
+
+function openSplashStudio(initialId) {
+  const mask = ce('div', 'modal-mask');
+  mask.innerHTML = `
+    <div class="modal" style="width:min(880px,94vw);max-height:92vh;display:flex;flex-direction:column">
+      <div class="modal-title">动画工作室</div>
+      <div style="font-size:12.5px;color:var(--text-dim);line-height:1.7;margin:6px 0 12px">
+        时间轴负责整段启动动画的效果，图层负责文字和图片素材；图层用 2–8 个关键帧控制位置、缩放和透明度。默认主题只读，可以「另存为新主题」。
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="input" id="studio-theme" style="max-width:260px"></select>
+        <input class="input" id="studio-name" maxlength="32" placeholder="新主题名称" style="max-width:200px">
+        <button class="btn sm" id="studio-create" type="button">另存为新主题</button>
+        <button class="btn sm" id="studio-open" type="button">预览动画</button>
+        <button class="btn sm primary" id="studio-save" type="button">保存</button>
+      </div>
+      <div id="studio-hint" class="hint-text" style="margin-top:6px"></div>
+      <div id="studio-stage" style="margin-top:8px;height:168px;border-radius:14px;overflow:hidden;position:relative;background:radial-gradient(circle at 50% 40%,#17233f,#07090e 70%);border:1px solid rgba(255,255,255,.08)">
+        <div id="studio-art" style="position:absolute;left:50%;top:38%;width:76px;height:76px;margin:-38px 0 0 -38px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#7dd3fc,#2563eb 46%,#0b1220 78%);box-shadow:0 0 26px rgba(88,166,255,.45)"></div>
+        <div id="studio-title" style="position:absolute;left:0;right:0;top:62%;text-align:center;font-size:18px;letter-spacing:4px;color:#e6edf3">星云启动器</div>
+        <div id="studio-lines" style="position:absolute;left:50%;bottom:16px;transform:translateX(-50%);width:220px"></div>
+        <div id="studio-layer-preview" style="position:absolute;inset:0;overflow:hidden;pointer-events:none"></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px" id="studio-templates"></div>
+      <div style="margin-top:8px;flex:1;min-height:130px;overflow:auto">
+        <div id="studio-rows"></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 6px">
+          <b style="font-size:12.5px">图层与关键帧</b>
+          <span class="hint-text">图片会复制到主题目录，最大 8 MB</span>
+          <button class="btn sm" id="studio-add-text" type="button">＋ 文字层</button>
+          <button class="btn sm" id="studio-add-image" type="button">＋ 图片层</button>
+        </div>
+        <div id="studio-layers"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button class="btn sm" id="studio-add" type="button">＋ 加一个时间点</button>
+        <span class="hint-text">时间轴与关键帧 0–8000 ms；默认主题不能直接保存。</span>
+        <button class="btn sm" id="studio-close" type="button" style="margin-left:auto">关闭</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  const q = (id) => mask.querySelector('#' + id);
+  let themes = [];
+  let currentId = 'default';
+  let currentBaseUrl = '';
+  let scene = { version: 3, timeline: [], layers: [], interactive: [] };
+  let timers = [];
+  let rows = [];
+
+  const hint = (s) => { q('studio-hint').textContent = s || ''; };
+  const stopPreview = () => { timers.forEach(clearTimeout); timers = []; };
+
+  function resetStage() {
+    stopPreview();
+    const art = q('studio-art');
+    const title = q('studio-title');
+    const lines = q('studio-lines');
+    art.getAnimations().forEach((a) => a.cancel());
+    title.getAnimations().forEach((a) => a.cancel());
+    title.textContent = '星云启动器';
+    title.style.cssText = 'position:absolute;left:0;right:0;top:62%;text-align:center;font-size:18px;letter-spacing:4px;color:#e6edf3';
+    art.style.cssText = 'position:absolute;left:50%;top:38%;width:76px;height:76px;margin:-38px 0 0 -38px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#7dd3fc,#2563eb 46%,#0b1220 78%);box-shadow:0 0 26px rgba(88,166,255,.45)';
+    lines.innerHTML = '<div style="height:3px;border-radius:3px;background:rgba(255,255,255,.16);margin-bottom:7px"></div><div style="height:3px;width:70%;border-radius:3px;background:rgba(255,255,255,.10)"></div>';
+    lines.style.opacity = '0.8';
+    mask.querySelectorAll('.studio-particle,.studio-burst,.studio-ripple').forEach((x) => x.remove());
+    const lp = q('studio-layer-preview');
+    if (lp) lp.innerHTML = '';
+  }
+
+  function particleBurst(preset) {
+    const box = q('studio-stage');
+    const n = preset === 'rain' ? 28 : (preset === 'snow' ? 24 : 18);
+    for (let i = 0; i < n; i += 1) {
+      const p = ce('i', 'studio-particle');
+      p.style.cssText = `position:absolute;left:${Math.random() * 100}%;top:${Math.random() * 100}%;width:2px;height:2px;border-radius:50%;background:#bfe3ff;opacity:${(0.3 + Math.random() * 0.6).toFixed(2)};animation:studioFloat ${(2 + Math.random() * 3).toFixed(2)}s ease-in-out infinite;animation-delay:-${Math.random() * 3}s`;
+      box.appendChild(p);
+    }
+  }
+
+  function runPreviewEffect(entry) {
+    const stage = q('studio-stage');
+    const art = q('studio-art');
+    const title = q('studio-title');
+    const lines = q('studio-lines');
+    const dur = Math.max(100, Math.min(4000, Number(entry.durationMs) || 700));
+    const target = entry.target === 'title' ? title : (entry.target === 'progress' ? lines : (entry.target === 'art' ? art : stage));
+    const option = { duration: dur, easing: 'ease-out', fill: 'both' };
+    switch (entry.effect) {
+      case 'fadeIn': target.animate([{ opacity: 0 }, { opacity: 1 }], option); break;
+      case 'slideIn': target.animate([{ transform: 'translateY(18px)', opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], option); break;
+      case 'blurIn': target.animate([{ filter: 'blur(12px)', opacity: 0 }, { filter: 'blur(0)', opacity: 1 }], option); break;
+      case 'reveal': target.animate([{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], option); break;
+      case 'glow': art.animate([{ boxShadow: '0 0 0 rgba(88,166,255,0)' }, { boxShadow: '0 0 50px rgba(88,166,255,.85)' }, { boxShadow: '0 0 26px rgba(88,166,255,.45)' }], { duration: dur, easing: 'ease-in-out' }); break;
+      case 'breath': target.animate([{ transform: 'scale(.92)', opacity: .8 }, { transform: 'scale(1.06)', opacity: 1 }, { transform: 'scale(.92)', opacity: .8 }], { duration: dur, easing: 'ease-in-out' }); break;
+      case 'shake': stage.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(0)' }], { duration: Math.min(dur, 600), easing: 'linear' }); break;
+      case 'rgbSplit': title.animate([{ textShadow: '3px 0 #ff5c8a, -3px 0 #60a5fa' }, { textShadow: '0 0 transparent' }], { duration: dur, easing: 'ease-out' }); break;
+      case 'typewriter': {
+        const text = '星云启动器';
+        title.textContent = '';
+        let i = 0;
+        const timer = setInterval(() => {
+          title.textContent = text.slice(0, i += 1);
+          if (i >= text.length) clearInterval(timer);
+        }, Math.max(40, dur / text.length));
+        timers.push(timer);
+        break;
+      }
+      case 'particles': particleBurst(entry.preset); break;
+      case 'progress': lines.animate([{ opacity: .5, transform: 'scaleX(.9)' }, { opacity: 1, transform: 'scaleX(1)' }, { opacity: .7, transform: 'scaleX(1)' }], { duration: Math.max(dur, 900), easing: 'ease-in-out' }); break;
+      case 'burst':
+      case 'ripple': {
+        const dot = ce('span', entry.effect === 'burst' ? 'studio-burst' : 'studio-ripple');
+        const size = entry.effect === 'burst' ? 8 : 20;
+        dot.style.cssText = `position:absolute;left:50%;top:38%;width:${size}px;height:${size}px;margin:-${size / 2}px 0 0 -${size / 2}px;border-radius:50%;background:${entry.effect === 'burst' ? '#9ad8ff' : 'transparent'};border:${entry.effect === 'ripple' ? '2px solid #9ad8ff' : '0'};pointer-events:none`;
+        stage.appendChild(dot);
+        dot.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(4)', opacity: 0 }], { duration: Math.min(dur, 900), easing: 'ease-out' });
+        timers.push(setTimeout(() => dot.remove(), Math.min(dur, 900)));
+        break;
+      }
+      case 'easteregg':
+        stage.animate([{ filter: 'hue-rotate(0)' }, { filter: 'hue-rotate(360deg)' }], { duration: Math.min(dur, 1200) });
+        break;
+      default: break;
+    }
+  }
+
+  function preview() {
+    resetStage();
+    const list = scene.timeline.slice().sort((a, b) => a.at - b.at).slice(0, 12);
+    list.forEach((entry) => {
+      timers.push(setTimeout(() => runPreviewEffect(entry), Math.max(0, Number(entry.at) || 0)));
+    });
+    renderLayerPreview();
+  }
+
+  function renderRows() {
+    const host = q('studio-rows');
+    host.innerHTML = '';
+    rows = [];
+    if (!scene.timeline.length) {
+      host.innerHTML = '<div class="hint-text" style="padding:14px;text-align:center">还没有时间点。点上面的模板，或「加一个时间点」。</div>';
+      return;
+    }
+    scene.timeline.forEach((entry, idx) => {
+      const row = ce('div');
+      row.style.cssText = 'display:grid;grid-template-columns:62px 1fr 96px 82px 72px 30px;gap:6px;align-items:center;margin-bottom:6px';
+      const time = ce('input', 'input');
+      time.type = 'number'; time.min = '0'; time.max = '8000'; time.step = '50'; time.value = String(entry.at || 0); time.title = '触发时间（毫秒）';
+      time.oninput = () => { entry.at = Math.max(0, Math.min(8000, Number(time.value) || 0)); };
+      const eff = ce('select', 'input');
+      SPLASH_EFFECT_LIST.forEach(([v, label]) => {
+        const o = ce('option', null, label); o.value = v; eff.appendChild(o);
+      });
+      eff.value = entry.effect;
+      eff.onchange = () => { entry.effect = eff.value; renderRows(); };
+      const target = ce('select', 'input');
+      [['art', '动画'], ['title', '标题'], ['progress', '进度条'], ['layer', '整层']].forEach(([v, label]) => {
+        const o = ce('option', null, label); o.value = v; target.appendChild(o);
+      });
+      target.value = entry.target || 'art';
+      target.onchange = () => { entry.target = target.value; renderRows(); };
+      const preset = ce('select', 'input');
+      const presets = entry.effect === 'particles' ? ['starfield', 'snow', 'rain', 'nebula'] : (entry.effect === 'easteregg' ? ['hyperspace', 'matrix', 'rainbow'] : []);
+      if (!presets.length) { preset.disabled = true; preset.innerHTML = '<option>—</option>'; } else {
+        presets.forEach((p) => { const o = ce('option', null, p); o.value = p; preset.appendChild(o); });
+        preset.value = entry.preset || presets[0];
+        preset.onchange = () => { entry.preset = preset.value; };
+        if (!entry.preset) entry.preset = presets[0];
+      }
+      const dur = ce('input', 'input');
+      dur.type = 'number'; dur.min = '100'; dur.max = '4000'; dur.step = '50'; dur.value = String(entry.durationMs || 700); dur.title = '持续毫秒';
+      dur.oninput = () => { entry.durationMs = Math.max(100, Math.min(4000, Number(dur.value) || 700)); };
+      const del = ce('button', 'btn sm danger', '×');
+      del.type = 'button';
+      del.title = '删除这个时间点';
+      del.onclick = () => { scene.timeline.splice(idx, 1); renderRows(); };
+      row.append(time, eff, target, preset, dur, del);
+      host.appendChild(row);
+    });
+  }
+
+  function layerKeys(ly) {
+    return (Array.isArray(ly.keys) ? ly.keys : []).slice().sort((a, b) => Number(a.at) - Number(b.at));
+  }
+
+  function renderLayerPreview() {
+    const host = q('studio-layer-preview');
+    if (!host) return;
+    host.innerHTML = '';
+    (scene.layers || []).forEach((ly) => {
+      if (!ly || (ly.type !== 'text' && ly.type !== 'image')) return;
+      const keys = layerKeys(ly);
+      if (keys.length < 2) return;
+      let el;
+      if (ly.type === 'image') {
+        if (!currentBaseUrl) return;
+        el = document.createElement('img');
+        el.src = `${currentBaseUrl.replace(/\/$/, '')}/${ly.src}`;
+        el.style.width = `${Math.max(5, Math.min(100, Number(ly.w) || 28))}%`;
+        el.style.objectFit = 'contain';
+        el.alt = '';
+        el.draggable = false;
+      } else {
+        el = document.createElement('div');
+        el.textContent = String(ly.text || '');
+        el.style.fontSize = `${Math.max(10, Math.min(96, Number(ly.size) || 24))}px`;
+        el.style.color = ly.color || '#e6edf3';
+        el.style.fontWeight = '600';
+        el.style.letterSpacing = '2px';
+        el.style.textAlign = 'center';
+        el.style.whiteSpace = 'pre-wrap';
+        el.style.textShadow = '0 2px 18px rgba(0,0,0,.55)';
+        el.style.maxWidth = '90%';
+      }
+      el.style.cssText += `;position:absolute;left:0;top:0;opacity:0;transform:translate(-50%,-50%);z-index:${Math.max(1, Math.min(12, Number(ly.z) || 2))};pointer-events:none`;
+      host.appendChild(el);
+      const first = keys[0];
+      const last = keys[keys.length - 1];
+      if (last.at <= first.at) {
+        el.style.left = `${last.x}%`;
+        el.style.top = `${last.y}%`;
+        el.style.opacity = String(last.opacity);
+        el.style.transform = `translate(-50%,-50%) scale(${last.scale})`;
+        return;
+      }
+      const frames = keys.map((k) => ({
+        left: `${k.x}%`, top: `${k.y}%`, opacity: k.opacity,
+        transform: `translate(-50%,-50%) scale(${k.scale})`,
+        offset: Math.max(0, Math.min(1, (k.at - first.at) / (last.at - first.at))),
+      }));
+      el.animate(frames, { duration: Math.max(100, last.at - first.at), delay: first.at, fill: 'forwards', easing: 'ease-out' });
+    });
+  }
+
+  function renderLayers() {
+    const host = q('studio-layers');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!scene.layers || !scene.layers.length) {
+      host.innerHTML = '<div class="hint-text" style="padding:10px 0;text-align:center">还没有图层。可以加文字或图片，用关键帧控制它们的位置、缩放和透明度。</div>';
+      return;
+    }
+    scene.layers.forEach((ly, idx) => {
+      const card = ce('div');
+      card.style.cssText = 'padding:8px;border:1px solid rgba(255,255,255,.09);border-radius:10px;margin-bottom:7px;background:rgba(255,255,255,.025)';
+      const head = ce('div');
+      head.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+      const badge = ce('span', null, ly.type === 'image' ? '图片层' : '文字层');
+      badge.style.cssText = 'font-size:11px;padding:2px 7px;border-radius:999px;background:rgba(88,166,255,.16);color:#9ad8ff;white-space:nowrap';
+      head.appendChild(badge);
+      if (ly.type === 'text') {
+        const txt = ce('input', 'input');
+        txt.style.cssText = 'flex:1;min-width:150px';
+        txt.maxLength = 80;
+        txt.value = ly.text || '';
+        txt.oninput = () => { ly.text = txt.value; renderLayerPreview(); };
+        head.appendChild(txt);
+        const color = ce('input', 'input');
+        color.type = 'color'; color.value = ly.color || '#e6edf3'; color.title = '文字颜色';
+        color.style.cssText = 'width:30px;height:26px;padding:1px';
+        color.oninput = () => { ly.color = color.value; renderLayerPreview(); };
+        head.appendChild(color);
+        const size = ce('input', 'input');
+        size.type = 'number'; size.min = '10'; size.max = '96'; size.step = '1'; size.value = String(ly.size || 24); size.title = '字号 px';
+        size.style.width = '58px';
+        size.oninput = () => { ly.size = Math.max(10, Math.min(96, Number(size.value) || 24)); renderLayerPreview(); };
+        head.appendChild(size);
+      } else {
+        const name = ce('span', null, String(ly.src || '').replace(/^assets\//, ''));
+        name.className = 'hint-text';
+        name.style.cssText = 'flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        head.appendChild(name);
+        const pick = ce('button', 'btn sm', '换图');
+        pick.type = 'button';
+        pick.onclick = () => pickLayerImage(ly);
+        head.appendChild(pick);
+        const w = ce('input', 'input');
+        w.type = 'number'; w.min = '5'; w.max = '100'; w.step = '1'; w.value = String(ly.w || 28); w.title = '宽度 %';
+        w.style.width = '58px';
+        w.oninput = () => { ly.w = Math.max(5, Math.min(100, Number(w.value) || 28)); renderLayerPreview(); };
+        head.appendChild(w);
+      }
+      const z = ce('input', 'input');
+      z.type = 'number'; z.min = '1'; z.max = '12'; z.step = '1'; z.value = String(ly.z || 2); z.title = '层级 1–12';
+      z.style.width = '48px';
+      z.oninput = () => { ly.z = Math.max(1, Math.min(12, Number(z.value) || 2)); renderLayerPreview(); };
+      head.appendChild(z);
+      const del = ce('button', 'btn sm danger', '×');
+      del.type = 'button'; del.title = '删除图层';
+      del.onclick = () => { scene.layers.splice(idx, 1); renderLayers(); renderLayerPreview(); };
+      head.appendChild(del);
+      card.appendChild(head);
+
+      const kh = ce('div');
+      kh.style.cssText = 'display:grid;grid-template-columns:52px 46px 46px 46px 46px 30px;gap:4px;margin:7px 0 3px;font-size:11px;color:var(--text-dim)';
+      ['时间', 'X%', 'Y%', '缩放', '透明', ''].forEach((x) => { const c = ce('div', null, x); c.style.textAlign = 'center'; kh.appendChild(c); });
+      card.appendChild(kh);
+      const keys = Array.isArray(ly.keys) ? ly.keys : [];
+      keys.forEach((k, ki) => {
+        const row = ce('div');
+        row.style.cssText = 'display:grid;grid-template-columns:52px 46px 46px 46px 46px 30px;gap:4px;margin-bottom:4px;align-items:center';
+        const mk = (val, min, max, step, title) => {
+          const i = ce('input', 'input');
+          i.type = 'number'; i.min = String(min); i.max = String(max); i.step = String(step); i.value = String(val); i.title = title;
+          i.style.cssText = 'padding:4px 5px;font-size:12px;min-width:0';
+          return i;
+        };
+        const at = mk(k.at, 0, 8000, 50, '关键帧时间 ms');
+        at.oninput = () => { k.at = Math.max(0, Math.min(8000, Number(at.value) || 0)); renderLayerPreview(); };
+        const x = mk(k.x, 0, 100, 1, 'X 位置 %');
+        x.oninput = () => { k.x = Math.max(0, Math.min(100, Number(x.value) || 0)); renderLayerPreview(); };
+        const y = mk(k.y, 0, 100, 1, 'Y 位置 %');
+        y.oninput = () => { k.y = Math.max(0, Math.min(100, Number(y.value) || 0)); renderLayerPreview(); };
+        const sc = mk(k.scale, 0.2, 3, 0.05, '缩放');
+        sc.oninput = () => { k.scale = Math.max(0.2, Math.min(3, Number(sc.value) || 1)); renderLayerPreview(); };
+        const op = mk(k.opacity, 0, 1, 0.05, '透明度 0–1');
+        op.oninput = () => { k.opacity = Math.max(0, Math.min(1, Number(op.value) || 0)); renderLayerPreview(); };
+        const kd = ce('button', 'btn sm danger', '×');
+        kd.type = 'button'; kd.title = '删除关键帧'; kd.disabled = keys.length <= 2;
+        kd.onclick = () => { if (keys.length > 2) { ly.keys.splice(ki, 1); renderLayers(); renderLayerPreview(); } };
+        row.append(at, x, y, sc, op, kd);
+        card.appendChild(row);
+      });
+      const addKey = ce('button', 'btn sm', '＋ 关键帧');
+      addKey.type = 'button';
+      addKey.style.marginTop = '2px';
+      addKey.onclick = () => {
+        const last = layerKeys(ly).slice(-1)[0] || { at: 0, x: 50, y: 50, scale: 1, opacity: 1 };
+        ly.keys.push({ at: Math.min(8000, Number(last.at) + 300), x: last.x, y: last.y, scale: last.scale, opacity: last.opacity });
+        renderLayers();
+        renderLayerPreview();
+      };
+      card.appendChild(addKey);
+      host.appendChild(card);
+    });
+  }
+
+  async function pickLayerImage(ly) {
+    if (currentId === 'default') { hint('默认主题只读，请先填写名称并点「另存为新主题」'); return; }
+    if (typeof api.splashAddAsset !== 'function') { hint('当前外壳不支持添加图片素材'); return; }
+    try {
+      const r = await api.splashAddAsset(currentId);
+      if (!r || !r.ok) { if (!(r && r.canceled)) hint('添加图片失败：' + ((r && r.error) || '未知原因')); return; }
+      ly.src = r.src;
+      renderLayers();
+      renderLayerPreview();
+      hint(`已复制图片 ${r.src}（${Math.round((r.size || 0) / 1024)} KB）`);
+    } catch (e) {
+      hint('添加图片失败：' + e.message);
+    }
+  }
+
+  async function addImageLayer() {
+    if (currentId === 'default') { hint('默认主题只读，请先新建主题再加图片'); return; }
+    if (typeof api.splashAddAsset !== 'function') { hint('当前外壳不支持添加图片素材'); return; }
+    try {
+      const r = await api.splashAddAsset(currentId);
+      if (!r || !r.ok) { if (!(r && r.canceled)) hint('添加图片失败：' + ((r && r.error) || '未知原因')); return; }
+      scene.layers.push({
+        id: `ly-${Date.now().toString(36)}`,
+        type: 'image', src: r.src, w: 30, z: 1,
+        keys: [
+          { at: 0, x: 50, y: 45, scale: 1.08, opacity: 0 },
+          { at: 900, x: 50, y: 45, scale: 1, opacity: 1 },
+        ],
+      });
+      renderLayers();
+      renderLayerPreview();
+      hint('已添加图片层，记得保存。');
+    } catch (e) {
+      hint('添加图片失败：' + e.message);
+    }
+  }
+
+  async function loadThemes(keepId) {
+    try {
+      const list = await api.splashListThemes();
+      themes = (list || []).filter((t) => t.available);
+    } catch { themes = []; }
+    const sel = q('studio-theme');
+    sel.innerHTML = '<option value="default">默认（只读）</option>';
+    themes.forEach((t) => {
+      const o = ce('option', null, t.name); o.value = t.id; sel.appendChild(o);
+    });
+    const want = keepId || currentId;
+    sel.value = themes.some((t) => t.id === want) ? want : 'default';
+    currentId = sel.value;
+    await loadScene(currentId);
+  }
+
+  async function loadScene(id) {
+    try {
+      const r = await api.splashGetScene(id);
+      if (!r || !r.ok) throw new Error((r && r.error) || '读取失败');
+      currentId = r.id;
+      currentBaseUrl = r.baseUrl || '';
+      scene = r.scene || { version: 3, timeline: [], layers: [], interactive: [] };
+      if (!Array.isArray(scene.timeline)) scene.timeline = [];
+      if (!Array.isArray(scene.layers)) scene.layers = [];
+      scene.layers.forEach((ly) => { if (!Array.isArray(ly.keys)) ly.keys = []; });
+      resetStage();
+      renderRows();
+      renderLayers();
+      renderLayerPreview();
+      hint(`${r.name || id} · ${r.readonly ? '只读，保存会新建主题' : '可保存'} · ${scene.timeline.length} 个时间点 · ${scene.layers.length} 个图层`);
+    } catch (e) {
+      hint('读取失败：' + e.message);
+    }
+  }
+
+  async function saveScene() {
+    if (currentId === 'default') {
+      hint('默认主题是只读的，请先填写名称并点「另存为新主题」');
+      return;
+    }
+    try {
+      const r = await api.splashSaveScene(currentId, scene);
+      if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+      scene = r.scene;
+      if (!Array.isArray(scene.layers)) scene.layers = [];
+      renderRows();
+      renderLayers();
+      renderLayerPreview();
+      hint(`已保存 ${scene.timeline.length} 个时间点、${scene.layers.length} 个图层${r.dropped ? `，丢弃 ${r.dropped} 条非法项` : ''}。重启启动器后生效。`);
+      await bindSplashSettings();
+    } catch (e) {
+      hint('保存失败：' + e.message);
+    }
+  }
+
+  async function createTheme() {
+    const name = q('studio-name').value.trim();
+    if (!name) { hint('请先填写新主题名称'); return; }
+    try {
+      const r = await api.splashCreateTheme({ name, baseId: currentId, scene });
+      if (!r || !r.ok) throw new Error((r && r.error) || '创建失败');
+      currentId = r.id;
+      state.config.splashTheme = r.id;
+      try { await api.configUpdate({ splashTheme: r.id }); } catch { /* 配置失败不影响主题 */ }
+      q('studio-name').value = '';
+      await loadThemes(r.id);
+      await bindSplashSettings();
+      hint(`已新建「${r.name}」并设为当前主题。重启后生效。`);
+    } catch (e) {
+      hint('新建失败：' + e.message);
+    }
+  }
+
+  q('studio-theme').onchange = () => loadScene(q('studio-theme').value);
+  q('studio-save').onclick = saveScene;
+  q('studio-create').onclick = createTheme;
+  q('studio-add').onclick = () => {
+    scene.timeline.push({ at: 0, effect: 'fadeIn', target: 'title', durationMs: 700 });
+    renderRows();
+  };
+  q('studio-add-text').onclick = () => {
+    scene.layers.push({
+      id: `ly-${Date.now().toString(36)}`,
+      type: 'text', text: '星云启动器', size: 24, color: '#e6edf3', z: 4,
+      keys: [
+        { at: 300, x: 50, y: 60, scale: 1, opacity: 0 },
+        { at: 1000, x: 50, y: 60, scale: 1, opacity: 1 },
+      ],
+    });
+    renderLayers();
+    renderLayerPreview();
+    hint('已添加文字层，记得保存。');
+  };
+  q('studio-add-image').onclick = addImageLayer;
+  q('studio-open').onclick = preview;
+  q('studio-close').onclick = () => { stopPreview(); mask.remove(); };
+
+  const tplHost = q('studio-templates');
+  SPLASH_TEMPLATES.forEach((tpl) => {
+    const b = ce('button', 'btn sm', tpl.name);
+    b.type = 'button';
+    b.onclick = () => {
+      scene.timeline = JSON.parse(JSON.stringify(tpl.timeline));
+      renderRows();
+      preview();
+      hint(`已套用模板「${tpl.name}」，记得保存。`);
+    };
+    tplHost.appendChild(b);
+  });
+
+  // 预览区动画关键帧
+  if (!document.getElementById('studio-keyframes')) {
+    const style = document.createElement('style');
+    style.id = 'studio-keyframes';
+    style.textContent = '@keyframes studioFloat{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-12px);opacity:1}}';
+    document.head.appendChild(style);
+  }
+
+  loadThemes(initialId || state.config.splashTheme || 'default');
+}
+
+async function bindSplashSettings() {
+  const sel = $('splash-theme');
+  const chk = $('splash-disabled');
+  const hint = $('splash-theme-hint');
+  if (!sel || !chk) return;
+  chk.checked = state.config.splashDisabled === true;
+  chk.onchange = () => {
+    state.config.splashDisabled = chk.checked;
+    api.configUpdate({ splashDisabled: chk.checked });
+  };
+  let list = [{ id: 'default', name: '默认', available: true, reason: '' }];
+  try {
+    if (typeof api.splashListThemes === 'function') list = await api.splashListThemes();
+  } catch (e) {
+    if (hint) hint.textContent = '读取主题失败：' + e.message;
+  }
+  sel.innerHTML = '';
+  (list || []).forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.available ? t.name : `${t.name}（不可用：${t.reason || '未知原因'}）`;
+    o.disabled = !t.available;
+    sel.appendChild(o);
+  });
+  const cur = state.config.splashTheme || 'default';
+  sel.value = cur;
+  if (sel.value !== cur) sel.value = 'default';
+  sel.onchange = () => {
+    state.config.splashTheme = sel.value;
+    api.configUpdate({ splashTheme: sel.value });
+  };
+  const importBtn = $('splash-import');
+  if (importBtn) {
+    importBtn.onclick = async () => {
+      const ih = $('splash-import-hint');
+      if (ih) ih.textContent = '选择主题包…';
+      try {
+        const r = await api.splashImportTheme();
+        if (!r || !r.ok) {
+          if (ih) ih.textContent = r && r.canceled ? '已取消' : ('导入失败：' + ((r && r.error) || '未知原因'));
+          return;
+        }
+        if (ih) ih.textContent = `已导入「${r.name}」，设为当前主题`;
+        state.config.splashTheme = r.id;
+        try { await api.configUpdate({ splashTheme: r.id }); } catch (e) { /* 配置写失败不影响导入 */ }
+        await bindSplashSettings();
+        const ih2 = $('splash-import-hint');
+        if (ih2) ih2.textContent = `已导入「${r.name}」${r.partial ? `，${(r.warnings || []).length} 条互动被丢弃` : ''}，重启后生效`;
+      } catch (e) {
+        if (ih) ih.textContent = '导入失败：' + e.message;
+      }
+    };
+  }
+  const studioBtn = $('splash-studio');
+  if (studioBtn) {
+    studioBtn.onclick = () => openSplashStudio(sel.value || 'default');
+  }
+  const openBtn = $('splash-open-themes');
+  if (openBtn) {
+    openBtn.onclick = async () => {
+      const ih = $('splash-import-hint');
+      try {
+        const r = await api.splashOpenThemes();
+        if (typeof r === 'string' && r && ih) ih.textContent = '无法打开目录：' + r;
+      } catch (e) {
+        if (ih) ih.textContent = '打开失败：' + e.message;
+      }
+    };
+  }
+  if (hint) {
+    const bad = (list || []).filter((t) => !t.available);
+    hint.textContent = bad.length
+      ? `有 ${bad.length} 个主题不可用，已跳过：${bad.map((t) => t.name).join('、')}`
+      : '主题包放在配置目录的 themes 文件夹；缺文件或 manifest 损坏会自动回落默认。';
+  }
+}
+
 function bindUiPrefs() {
   for (const key of Object.keys(UI_OPTS)) {
     const box = $(`ui-${key}`);
@@ -592,6 +1271,7 @@ function bindUiPrefs() {
   bindGlassMaterial();
   bindGlassSlider();
   bindThemeOpts();
+  bindSplashSettings();
   bindWallpaperPanel();
 }
 
@@ -842,6 +1522,15 @@ function applyWallpaper() {
     return;
   }
 
+  // 内置默认壁纸：雪山湖泊。首次启动 / 点“恢复默认”时铺这张图，
+  // 不再使用旧的纯渐变底，视觉上更像真正的启动器背景。
+  if (type === 'builtin') {
+    document.body.setAttribute('data-wall', 'custom');
+    setBgMedia(img, new URL('assets/wallpapers/01-mountain-lake.jpg', location.href).href, true);
+    setBgMedia(vid, '', false);
+    return;
+  }
+
   const active = type === 'custom' && !!c.wallpaperUrl;
   document.body.setAttribute('data-wall', active ? 'custom' : 'builtin');
   if (!active) {
@@ -887,7 +1576,10 @@ function paintWallInfo(info, dim) {
       `<span class="wall-tag">${builtin ? '内置精选' : (WALL_KIND[state.config.wallpaperKind] || '自定义')}</span>` +
       `<span>已启用</span>`;
   } else if (state.config.wallpaperType === 'builtin') {
-    box.innerHTML = '<span>当前为内置渐变背景</span>';
+    box.innerHTML =
+      '<span class="wall-name">雪山湖泊</span>' +
+      '<span class="wall-tag">内置精选</span>' +
+      '<span>默认壁纸</span>';
   } else {
     box.innerHTML = '<span>当前未启用自定义背景</span>';
   }
@@ -919,7 +1611,7 @@ function paintWallDynInfo() {
   }
   box.innerHTML = type === 'custom'
     ? '<span>当前使用自定义背景，点上方卡片可切换为动态壁纸</span>'
-    : '<span>当前为内置渐变背景</span>';
+    : '<span>当前使用内置精选壁纸：雪山湖泊</span>';
 }
 
 async function pickWallpaper() {
@@ -1013,7 +1705,9 @@ function applyBuiltinWallpaper(w) {
   toast(`已应用壁纸：${w.name}`);
 }
 function syncPhotoCards() {
-  const cur = builtinWallpaperPathOf(state.config.wallpaperUrl);
+  const cur = state.config.wallpaperType === 'builtin'
+    ? '01-mountain-lake.jpg'
+    : builtinWallpaperPathOf(state.config.wallpaperUrl);
   document.querySelectorAll('#wall-photo-grid .wall-photo-card, #wall-lib-grid .wall-lib-card').forEach((el) => {
     el.classList.toggle('on', !!cur && el.dataset.file === cur);
   });
@@ -1507,7 +2201,7 @@ function openAIChat() {
     trash: `<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="m6 7 1 14h10l1-14"/><path d="M10 11v6M14 11v6"/>`,
   };
   const enabledToolCount = (() => {
-    try { return aiEnabledTools().length; } catch (e) { return AI_AGENT_TOOL_DEFS.length; }
+    try { return aiEnabledTools().length; } catch (e) { return allAgentTools().length; }
     })();
   // 对话和 Agent 的能力彻底分开：对话不出现任何写代码/插件入口，Agent 不出现闲聊入口
   const aiSuggestionsForMode = (mode = aiMode) => (mode === 'agent' ? [
@@ -2921,6 +3615,9 @@ function openAIChat() {
       toast('这是代码/插件任务，已自动切到 Agent');
     }
 
+    // Agent 每次发消息前刷新一次 MCP 工具池，装完新 server 不用重启
+    if (aiMode === 'agent') await loadMcpAgentTools(true);
+
     // 「聊天」模式保留原来的本地快捷动作；Agent 模式让模型自己规划工具调用
     if (aiMode === 'chat' || !ai.apiKey) {
       try {
@@ -3020,6 +3717,11 @@ function openAIChat() {
         && (
           (/写|生成|做|创建|改|修复|plugin/i.test(text) && /插件|plugin/i.test(text))
           || /(联网|上网|网页|链接|查资料|读取网页|总结.*(网页|链接))/.test(text)
+          || (AI_MCP_TOOL_DEFS.length > 0 && /(mcp|工具服务器|外部工具|调用.*工具|用.*工具)/i.test(text))
+          || AI_MCP_TOOL_DEFS.some((t) => {
+            const short = String(t.name || '').split('·').pop().trim().toLowerCase();
+            return short && text.toLowerCase().includes(short);
+          })
         );
       if (wantNativeToolCall) {
         // 原生 Function Calling：模型直接返回 tool_calls，工具结果用 role=tool 回填。
@@ -3480,7 +4182,7 @@ function openAISettings(returnToAI) {
   }
   const accountName = (state.account && (state.account.name || state.account.username)) || '未登录';
   const accountKind = state.account ? (state.account.type === 'microsoft' ? '微软账号' : '本地账号') : '本地模式';
-  const toolTotal = AI_AGENT_TOOL_DEFS.length;
+  const toolTotal = allAgentTools().length;
   const toolOn = aiEnabledTools().length;
 
   // 先移除已有设置弹窗
@@ -6773,6 +7475,234 @@ async function loadInstanceSettings(inst, gameDir, body) {
  */
 const APP_CHANGELOG = [
   {
+    version: '1.0.93',
+    date: '2026-11-22',
+    channel: 'stable',
+    items: [
+      '补齐陶瓦 AGPL、EasyTier LGPL、WinDivert、Wintun 的许可证原文和对应源码说明。',
+      '不再随包分发 Npcap 的 Packet.dll；改用系统已安装的 Npcap，并在联机页提供下载入口。',
+      '修正第三方许可页：补上 WinDivert、Wintun、Npcap 条目，去掉错误的「WinDivert 配套运行库」标注。',
+      'sherpa-onnx-node、franc-min、Node.js、.NET 运行时的许可证原文统一放到安装目录 third-party-licenses。',
+    ],
+  },
+  {
+    version: '1.0.92',
+    date: '2026-11-22',
+    channel: 'stable',
+    items: [
+      '修复 Windows 程序图标和版本信息没有写进 exe 的问题：桌面、任务栏和快捷方式不再显示 Electron 默认原子图标。',
+      '程序属性里的 ProductName 改为「星云启动器」，FileDescription 和版本号同步为 1.0.92。',
+    ],
+  },
+  {
+    version: '1.0.91',
+    date: '2026-11-22',
+    channel: 'stable',
+    items: [
+      '维护重打包：MCP 应用内确认页、图层关键帧等功能原样保留，重新构建安装包并同步发布清单。',
+      '手机版工程版本记录对齐 1.0.23；实际 APK 未重签，移动端功能不变。',
+    ],
+  },
+  {
+    version: '1.0.90',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      'MCP 工具调用改用应用内确认页：显示 server、工具说明、启动命令或连接地址、完整参数，不再弹系统对话框。',
+      '只读工具可勾选「本会话不再询问」，权限按 server + 工具分别记录；破坏性工具每次调用都确认，120 秒未操作自动拒绝。',
+      '动画工作室新增文字层和图片层：图片会复制到主题 assets 目录（最大 8 MB），每层可用 2–8 个关键帧控制位置、缩放、透明度。',
+      '图层支持层级 1–12，文本颜色、字号、图片宽度都能在工作室里直接调整，并带实时预览；旧版 scene.json 不受影响。',
+    ],
+  },
+  {
+    version: '1.0.89',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      'MCP 补齐 HTTP / SSE：支持 Streamable HTTP 和旧版 SSE 远程 server，可填地址与 Bearer / API Key 请求头。',
+      'MCP 新增可视化动画工作室：时间轴按毫秒触发淡入、滑入、抖动、光晕、打字机、粒子等效果，内置 10 套模板，可保存成新主题。',
+      '动画工作室带实时预览，默认主题只读，保存时自动另存为自定义主题并设为当前主题。',
+    ],
+  },
+  {
+    version: '1.0.88',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '更新源改成同一个仓库下的三个独立目录：正式版 updates/stable、测试版 updates/beta、手机版 updates/mobile，三个地址不再共用。',
+      '设置页明确显示每个通道自己的更新地址和本机更新源；旧配置里测试版、手机版共用的 GitHub 地址会自动迁移回各自目录。',
+      '手机版新增真正的检查更新：读取手机版目录、比较版本、应用内下载 APK，完成后自动拉起系统安装器。',
+      '本机更新源目录同步拆成「正式 / 测试 / 手机」，旧的「安卓」目录首次启动自动迁移。',
+    ],
+  },
+  {
+    version: '1.0.87',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '新增 MCP Host：设置页可以安装、连接、停用、删除 MCP server，实时显示在线状态和工具数量；停用或删除会立刻结束子进程。',
+      'MCP 工具接入星云 Agent：工具名带 server 前缀，原生工具调用和本机工具两条链路都能用；安装前展示完整命令，调用前单独确认。',
+      '启动动画支持直接导入主题包 zip / nskin：自动校验 manifest、拒绝路径穿越和符号链接，损坏主题不会覆盖旧主题或白屏。',
+    ],
+  },
+  {
+    version: '1.0.86',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '新增启动动画与真实启动自检：同窗口播放，最短 1.5 秒、最长 8 秒，ESC 或点击可跳过。',
+      '新增启动动画主题包：放到配置目录 themes 文件夹即可，缺文件或 manifest 损坏自动回落默认，不会白屏。',
+      '设置页新增启动动画主题选择和「不再显示」开关。',
+    ],
+  },
+  {
+    version: '1.0.85',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '一键开服的「玩家 / OP」升级为成员管理：在线玩家、OP、白名单、黑名单、进过服的成员统一成一个列表，带在线/OP/白名单/黑名单状态标签。',
+      '每一行可以直接给 / 撤 OP、加 / 移白名单、踢出、切生存或创造、拉黑或解封；服务器在线时命令立即生效，离线时改配置文件。',
+      '黑名单支持填写原因，写入 banned-players.json；白名单可以直接开启或关闭，离线改 server.properties，在线立即生效。',
+      '内存清理结果改看真正回收的待机缓存和启动器自身占用；没有缓存可清时直接说明内存被运行中的程序占用，不再把 1 MB 波动显示成“已释放”。',
+    ],
+  },
+  {
+    version: '1.0.84',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '修复一键清理内存几乎不释放的问题：待机列表命令值、参数长度、特权结构对齐、文件缓存长度和结果文件 BOM 全部修正。',
+      '清理结果分开显示可用内存增量和实际清空的待机缓存，不再拿 1 MB 的可用内存差当总释放量。',
+    ],
+  },
+  {
+    version: '1.0.83',
+    date: '2026-11-21',
+    channel: 'stable',
+    items: [
+      '星云直连与兼容通道彻底拆开：星云直连只认 NEBULA-DIRECT 私有房卡，只允许星云启动器互连；PCL / 陶瓦 / EasyTier / IP 等通用通道对所有启动器开放。',
+      '创建页删掉「自动先星云再回退 PCL」，改成 PCL 邀请码、陶瓦房号、EasyTier 房间、星云直连四条独立路径，失败不会串到另一条。',
+      '星云直连改回自研 Go 直连核心（STUN + P2P），不再依赖 EasyTier，也不再弹管理员授权。',
+      '手机版同步支持 NEBULA-DIRECT 私有房卡，电脑开房手机能进，手机开房电脑也能进。',
+      '修复安卓 720×404 矮横屏下联机页只看到切换栏、房间卡被顶出屏幕的问题。',
+      '修正红石 / 陶瓦联机调用内置浏览器的问题，统一交给系统默认浏览器打开。',
+    ],
+  },
+  {
+    version: '1.0.81',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '统一下载队列补 25 秒响应头超时、30 秒无数据断开和立即取消：CDN 卡住时不再静默挂几十分钟。',
+      'EasyTier 提权脚本路径加引号，装在有空格的中文目录里也能正常拉起；UAC 取消后不再占着 RPC 端口。',
+      '安全模式启动失败或参数准备失败时，自动把临时移走的 mods 目录还原，不再把玩家模组留在备份目录。',
+      '微软登录 Node 请求失败转 Chromium 重试时重新计时；refresh_token 轮换缺失时保留旧令牌。',
+      '配合手机版 1.0.22：修正 Android 下载暂停状态被显示成「已完成」的问题，并补下载轮询超时与 90 秒自动重试。',
+    ],
+  },
+  {
+    version: '1.0.80',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '微软 / 第三方账号请求全部加 20 秒超时：网络或代理卡住时直接报错，不再让启动一直转圈半小时。',
+      '启动时的账号续期、Xbox 验证和皮肤站验证不会再无限等待；超时后可重试或重新登录。',
+      '配合手机版 1.0.21：下载卡死 90 秒自动重试一次，并显示实时速度和系统失败原因。',
+    ],
+  },
+  {
+    version: '1.0.79',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '联机中心把「加入房间」和「创建房间」彻底分开：创建页不再出现加入按钮，加入页不再出现建房按钮。',
+      '所有创建方式收进创建页，按联机方式显示对应参数；所有加入方式收进加入页，房号 / 邀请码 / 房卡统一在一个输入框识别。',
+      '房卡、邀请码、房间号的复制按钮移到标签下方，PCL 邀请码生成后立刻可复制，不用在页面底部找。',
+      '修复创建房间时误读加入页节点字段的问题；陶瓦游戏名、EasyTier 节点和手动参数各归各页。',
+    ],
+  },
+  {
+    version: '1.0.78',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '联机中心新增通用直连：IP:端口、域名、localhost 都能识别，端口缺省 25565。',
+      '覆盖自建服、SakuraFrp、ZeroTier、Tailscale、Radmin 等所有给最终地址的联机方案。',
+      '裸 IP:端口不再误判为星云房卡；星云房卡统一用 NEBULA:房间名@地址。',
+      'PCL 官方 10 位大厅号明确提示私有协议，建议改用 U/ 房号或 P 邀请码。',
+    ],
+  },
+  {
+    version: '1.0.77',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '联机中心新增启动实例 / 存档选择，「创建后启动游戏并进入存档」和「加入后自动启动游戏」两个开关。',
+      '陶瓦建房改成先启动游戏、再等开放局域网，避免一直卡在等待。',
+      '星云直连、PCL 邀请码、EasyTier 建房成功后可直接进游戏；关闭开关则只组网。',
+      '加入星云 / PCL / 陶瓦 / EasyTier 都能按开关自动启动实例并进服。',
+    ],
+  },
+  {
+    version: '1.0.76',
+    date: '2026-11-20',
+    channel: 'stable',
+    items: [
+      '星云直连和全启动器兼容入口合并成一张「联机中心」：加入 / 创建房间在同一张卡里。',
+      '加入自动识别星云房卡、P 开头 PCL 邀请码、U/ 或 4-4-4-4 陶瓦房号、12 位 EasyTier 房间号。',
+      '创建房间可选自动、星云直连、PCL 邀请码、陶瓦房号、EasyTier；自动先试星云，失败转 PCL。',
+      '星云房卡改为 NEBULA:房间名@地址，朋友粘贴后不用再手动对齐房间名。',
+      '原有分项参数页收进「高级设置」，手动 EasyTier 参数入口保留。',
+    ],
+  },
+  {
+    version: '1.0.73',
+    date: '2026-11-19',
+    channel: 'beta',
+    items: [
+      '修复星云直连开房/加入时把 stun 当成布尔值发送，导致 Go 核心报 bad json、界面等待超时。',
+      'STUN 地址统一规范化；关闭 STUN 时发送空字符串，不再触发协议解析错误。',
+    ],
+  },
+  {
+    version: '1.0.72',
+    date: '2026-11-18',
+    channel: 'beta',
+    items: [
+      '安装界面版本号改为自动读取当前版本，不再固定显示 1.0.68',
+      '安装器、卸载器、程序窗口和托盘图标统一换成深蓝底白云朵新图标',
+      '安装向导左侧栏和顶部头图同步换成新图标与新配色',
+    ],
+  },
+  {
+    version: '1.0.71',
+    date: '2026-11-18',
+    channel: 'beta',
+    items: [
+      '默认壁纸改为内置精选「雪山湖泊」，首次启动和点“恢复默认”都会铺这张图',
+      '壁纸卡片的默认选中状态与当前默认壁纸同步，打开设置就能看到选中的是哪张',
+    ],
+  },
+  {
+    version: '1.0.70',
+    date: '2026-11-18',
+    channel: 'beta',
+    items: [
+      '修复内置壁纸卡片选中后外发光把圆角顶出去、和未选中卡片对不齐的问题',
+      '壁纸卡片统一 13px 圆角，选中描边改为卡片内部描边，四角保持同一弧度',
+      '壁纸图片不再单独套 16px 圆角，改由卡片统一裁切，消除图片四角与卡片圆弧错位',
+    ],
+  },
+  {
+    version: '1.0.69',
+    date: '2026-11-18',
+    channel: 'beta',
+    items: [
+      '修复设置「主题色」下方原生取色器被撑成大蓝色方块的问题，改由彩虹圆点打开取色器',
+      '主题色圆点选中后恢复彩色描边，不再因为描边颜色继承文字色而看不见',
+    ],
+  },
+  {
     version: '1.0.68',
     date: '2026-11-16',
     channel: 'beta',
@@ -7403,6 +8333,15 @@ function drawBdKind(host, kind, label, pkg) {
   addBtn('📁 存档目录', '', !pkg, `未安装基岩版${label}，没有存档目录`, async () => {
     const r = await api.bedrockOpenSaves(kind);
     if (!r || !r.ok) toast((r && r.error) || '无法打开存档目录', true);
+  });
+  addBtn('🧩 导入 Add-On', '', !pkg, `未安装基岩版${label}，无法导入`, async () => {
+    const file = await api.pickFile([{ name: '基岩版 Add-On', extensions: ['mcaddon', 'mcpack'] }]);
+    if (!file) return;
+    const r = await api.bedrockImportAddon(file, kind);
+    if (!r || !r.ok) { toast((r && r.error) || '导入失败', true); return; }
+    const n = (r.installed || []).length;
+    const skip = (r.skipped || []).length;
+    toast(`已导入 ${n} 个包${skip ? `，跳过 ${skip} 个` : ''}，进游戏在世界设置里启用`);
   });
   host.appendChild(box);
 }
@@ -10282,7 +11221,9 @@ function renderVersions(page) {
 
   // 基岩版全版本清单：电脑 Windows（mcappx.com 官方原版）/ 安卓 APK（MCAPKS）双源切换
   let bdSource = 'win', bdList = [], bdVType = 'all', bdLoaded = false, bdLoading = false;
-  const BD_GRID_MAX = 60;
+  let bdShow = 60;
+  let bdLoadGen = 0;
+  const BD_PAGE = 60;
 
   const bdTypeTabs = () => {
     const tabs = $('bd-vtype-tabs');
@@ -10298,6 +11239,7 @@ function renderVersions(page) {
         tabs.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
         b.classList.add('active');
         bdVType = b.dataset.bvtype || 'all';
+        bdShow = BD_PAGE;
         renderBdGrid();
       };
     });
@@ -10332,16 +11274,18 @@ function renderVersions(page) {
       if (cnt) cnt.textContent = '';
       return;
     }
-    const show = list.slice(0, BD_GRID_MAX);
+    const show = list.slice(0, bdShow);
     grid.innerHTML = show.map((v) => `
       <button class="ver-cell" data-bdver="${escapeHtml(v.version)}" type="button">
         <span class="ver-cell-id">${escapeHtml(v.version)}</span>
         <span class="ver-cell-meta">${escapeHtml(bdTypeLabel(v))}${bdSource === 'win' && v.buildType ? ' · ' + escapeHtml(v.buildType) : ''} · ${escapeHtml(v.date || '—')}</span>
         <span class="ver-cell-size">${bdSource === 'win' ? (v.directUrl ? '直链' : '页面下载') : (escapeHtml(v.size || '体积未知'))}</span>
-      </button>`).join('');
+      </button>`).join('') + (list.length > show.length
+        ? `<button class="btn sm ghost" id="bd-more" type="button" style="grid-column:1/-1">显示更多（还有 ${list.length - show.length} 个）</button>`
+        : '');
     if (cnt) {
-      cnt.textContent = list.length > BD_GRID_MAX
-        ? `共 ${list.length} 个版本，这里显示最新的 ${BD_GRID_MAX} 个 · 用上面的类型或搜索缩小范围`
+      cnt.textContent = list.length > show.length
+        ? `共 ${list.length} 个版本，当前显示 ${show.length} 个 · 点「显示更多」继续`
         : `共 ${list.length} 个版本`;
     }
     grid.querySelectorAll('[data-bdver]').forEach((b) => {
@@ -10353,44 +11297,66 @@ function renderVersions(page) {
         else await renderBdDetail(ver);
       };
     });
+    const more = grid.querySelector('#bd-more');
+    if (more) more.onclick = () => { bdShow += BD_PAGE; renderBdGrid(); };
   };
 
-  const renderBdDetail = async (version) => {
+  let bdArch = 'v8a';
+  const renderBdDetail = async (version, arch) => {
     const box = $('bd-ver-detail');
     if (!box) return;
-    box.innerHTML = '<div class="loading-inline" style="color:var(--text-dim);font-size:13px">正在获取下载链接…</div>';
+    const a = arch || bdArch || 'v8a';
+    bdArch = a;
+    const archTabs = `
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <button class="btn sm${a === 'v8a' ? ' primary' : ''}" data-bdarch="v8a" type="button">arm64-v8a（64 位）</button>
+        <button class="btn sm${a === 'v7a' ? ' primary' : ''}" data-bdarch="v7a" type="button">armeabi-v7a（32 位）</button>
+      </div>`;
+    box.innerHTML = `${archTabs}<div class="loading-inline" style="color:var(--text-dim);font-size:13px">正在获取下载链接…</div>`;
+    box.querySelectorAll('[data-bdarch]').forEach((b) => {
+      b.onclick = () => { if (b.dataset.bdarch !== bdArch) renderBdDetail(version, b.dataset.bdarch); };
+    });
     try {
-      const r = await api.bedrockVersionDownloads(version, 'v8a');
+      const r = await api.bedrockVersionDownloads(version, a);
       if (!r || !Array.isArray(r.downloads) || !r.downloads.length) {
-        box.innerHTML = '<div class="empty-tip">该版本暂无可用下载链接</div>';
-        return;
+        box.innerHTML = `${archTabs}<div class="empty-tip">该版本这个架构暂无可用下载链接，换个架构试试</div>`;
+      } else {
+        box.innerHTML = `
+          ${archTabs}
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">${escapeHtml(version)} 的下载链接（${escapeHtml(a === 'v7a' ? 'armeabi-v7a 32 位' : 'arm64-v8a 64 位')}）</div>
+          <div class="row" style="flex-wrap:wrap;gap:10px">
+            ${r.downloads.map((d) => `
+              <div class="glass netdisk-card">
+                <div class="netdisk-head">
+                  <span class="netdisk-name">${escapeHtml(d.name)}</span>
+                  ${d.password ? `<button class="netdisk-pwd" data-bdpwd="${escapeHtml(d.password)}" title="点击复制提取码">提取码 <b>${escapeHtml(d.password)}</b></button>` : ''}
+                </div>
+                <div class="netdisk-actions">
+                  <button class="btn sm" data-bdopen="${escapeHtml(d.url)}">打开</button>
+                  <button class="btn sm" data-bdcopy="${escapeHtml(d.url)}">复制链接</button>
+                  ${d.password ? `<button class="btn sm ghost" data-bdboth="${escapeHtml(d.url)}|${escapeHtml(d.password)}">复制链接+提取码</button>` : ''}
+                </div>
+              </div>`).join('')}
+          </div>
+          <div class="hint-text" style="margin-top:10px">这些是网盘分享页链接（可能失效），请自行到对应网盘下载，提取码已一并给出。</div>`;
+        box.querySelectorAll('[data-bdopen]').forEach((b) => b.onclick = () => api.openUrl(b.dataset.bdopen));
+        box.querySelectorAll('[data-bdcopy]').forEach((b) => b.onclick = async () => {
+          try { await navigator.clipboard.writeText(b.dataset.bdcopy); toast('链接已复制'); } catch { toast('复制失败', true); }
+        });
+        box.querySelectorAll('[data-bdpwd]').forEach((b) => b.onclick = async () => {
+          try { await navigator.clipboard.writeText(b.dataset.bdpwd); toast('提取码已复制'); } catch { toast('复制失败', true); }
+        });
+        box.querySelectorAll('[data-bdboth]').forEach((b) => b.onclick = async () => {
+          const [url, pwd] = String(b.dataset.bdboth || '').split('|');
+          try { await navigator.clipboard.writeText(`链接: ${url}\n提取码: ${pwd}`); toast('链接和提取码已复制'); } catch { toast('复制失败', true); }
+        });
       }
-      box.innerHTML = `
-        <div style="font-size:13px;font-weight:600;margin-bottom:10px">${escapeHtml(version)} 的下载链接（架构 ${escapeHtml(r.type || 'v8a')}）</div>
-        <div class="row" style="flex-wrap:wrap;gap:10px">
-          ${r.downloads.map((d) => `
-            <div class="glass netdisk-card">
-              <div class="netdisk-head">
-                <span class="netdisk-name">${escapeHtml(d.name)}</span>
-                ${d.password ? `<button class="netdisk-pwd" data-bdpwd="${escapeHtml(d.password)}" title="点击复制提取码">提取码 <b>${escapeHtml(d.password)}</b></button>` : ''}
-              </div>
-              <div class="netdisk-actions">
-                <button class="btn sm" data-bdopen="${escapeHtml(d.url)}">打开</button>
-                <button class="btn sm" data-bdcopy="${escapeHtml(d.url)}">复制链接</button>
-              </div>
-            </div>`).join('')}
-        </div>
-        <div class="hint-text" style="margin-top:10px">这些是网盘分享页链接（可能失效），请自行到对应网盘下载，提取码已一并给出。</div>`;
-      box.querySelectorAll('[data-bdopen]').forEach((b) => b.onclick = () => api.openUrl(b.dataset.bdopen));
-      box.querySelectorAll('[data-bdcopy]').forEach((b) => b.onclick = async () => {
-        try { await navigator.clipboard.writeText(b.dataset.bdcopy); toast('链接已复制'); } catch { toast('复制失败', true); }
-      });
-      box.querySelectorAll('[data-bdpwd]').forEach((b) => b.onclick = async () => {
-        try { await navigator.clipboard.writeText(b.dataset.bdpwd); toast('提取码已复制'); } catch { toast('复制失败', true); }
-      });
     } catch (e) {
-      box.innerHTML = `<div class="empty-tip">${escapeHtml((e && e.message) ? e.message : '获取下载链接失败')}</div>`;
+      box.innerHTML = `${archTabs}<div class="empty-tip">${escapeHtml((e && e.message) ? e.message : '获取下载链接失败')}</div>`;
     }
+    box.querySelectorAll('[data-bdarch]').forEach((b) => {
+      b.onclick = () => { if (b.dataset.bdarch !== bdArch) renderBdDetail(version, b.dataset.bdarch); };
+    });
   };
 
   const winPageUrl = (v) => {
@@ -10436,22 +11402,26 @@ function renderVersions(page) {
   };
 
   const loadBedrockVersions = async (force) => {
-    if (bdLoading) return;
+    // 切来源时旧请求可能还在飞：用代号丢弃旧结果，不能因为 bdLoading 就跳过新请求
+    const gen = ++bdLoadGen;
+    const src = bdSource;
     bdLoading = true;
     const grid = $('bd-ver-grid');
     if (grid) grid.innerHTML = '<div class="hint-text">正在读取版本清单…</div>';
     try {
-      const r = bdSource === 'win'
+      const r = src === 'win'
         ? await api.bedrockWindowsVersions(!!force)
         : await api.bedrockVersions(!!force);
+      if (gen !== bdLoadGen || src !== bdSource) return;
       bdList = (r && Array.isArray(r.versions)) ? r.versions : [];
       bdLoaded = true;
       renderBdGrid();
     } catch (e) {
+      if (gen !== bdLoadGen || src !== bdSource) return;
       bdLoaded = false;
       if (grid) grid.innerHTML = `<div class="empty-tip">${escapeHtml((e && e.message) ? e.message : '读取失败')}</div>`;
     } finally {
-      bdLoading = false;
+      if (gen === bdLoadGen) bdLoading = false;
     }
   };
 
@@ -10465,7 +11435,7 @@ function renderVersions(page) {
           srcTabs.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
           b.classList.add('active');
           bdSource = b.dataset.bdsrc || 'win';
-          bdList = []; bdLoaded = false;
+          bdList = []; bdLoaded = false; bdShow = BD_PAGE;
           const box = $('bd-ver-detail'); if (box) box.innerHTML = '';
           bdTypeTabs();
           loadBedrockVersions(false);
@@ -10474,7 +11444,7 @@ function renderVersions(page) {
     }
     bdTypeTabs();
     const search = $('bd-ver-search');
-    if (search && !search._bdBound) { search._bdBound = true; search.oninput = renderBdGrid; }
+    if (search && !search._bdBound) { search._bdBound = true; search.oninput = () => { bdShow = BD_PAGE; renderBdGrid(); }; }
     const refresh = $('bd-ver-refresh');
     if (refresh) refresh.onclick = () => loadBedrockVersions(true);
     if (!bdLoaded) loadBedrockVersions(false);
@@ -10794,6 +11764,164 @@ const CENTER_CATS = [
   { id: 'world',        name: '世界',   ico: '🌍' },
 ];
 
+function bedrockAddonPanelHtml() {
+  return `
+    <div class="glass" style="padding:24px">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap">
+        <div style="min-width:0">
+          <div style="font-weight:600;margin-bottom:6px">基岩版 Add-On 本地导入</div>
+          <div class="hint-text" style="font-size:13px;line-height:1.7">
+            选择自己下载的 <b>.mcaddon</b> 或 <b>.mcpack</b>，启动器会解压到当前基岩版的
+            <b>com.mojang</b>，不下载、不改世界存档。<br>
+            导入后进游戏，在「设置 → 世界设置 → 行为包 / 资源包」里启用即可。
+          </div>
+        </div>
+        <button class="btn primary" id="bedrock-addon-pick" type="button">选择文件并导入</button>
+      </div>
+      <div id="bedrock-addon-hint" class="hint-text" style="margin-top:12px"></div>
+      <div id="bedrock-addon-result" style="margin-top:12px"></div>
+    </div>
+    <div class="glass" style="padding:24px;margin-top:14px">
+      <div style="font-weight:600;margin-bottom:6px">在线获取 Add-On</div>
+      <div class="hint-text" style="font-size:13px;line-height:1.7">
+        从 CurseForge 搜索基岩版附加包，下载后自动导入当前基岩版。需要先在「设置 → 网络与下载」里填写 CurseForge API Key。
+      </div>
+      <div class="row" style="margin-top:14px">
+        <input class="input grow" id="bd-cf-q" placeholder="搜索 Add-On，例如 furniture / mobs / tools">
+        <button class="btn primary" id="bd-cf-search" type="button">搜索</button>
+      </div>
+      <div class="hint-text" id="bd-cf-status" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+        <button class="btn sm ghost" id="bd-cf-mcpedl" type="button">没有 Key？去 MCPEDL 浏览</button>
+        <button class="btn sm ghost" id="bd-cf-web" type="button">打开 CurseForge 网页</button>
+      </div>
+      <div class="card-list" id="bd-cf-list" style="margin-top:12px"></div>
+    </div>
+  `;
+}
+
+function bindBedrockAddonPanel(root) {
+  const pick = root.querySelector('#bedrock-addon-pick');
+  if (!pick) return;
+  const hint = root.querySelector('#bedrock-addon-hint');
+  const result = root.querySelector('#bedrock-addon-result');
+  pick.onclick = async () => {
+    const file = await api.pickFile([{ name: '基岩版 Add-On', extensions: ['mcaddon', 'mcpack'] }]);
+    if (!file) return;
+    hint.textContent = '正在导入，请稍等…';
+    result.innerHTML = '';
+    try {
+      const r = await api.bedrockImportAddon(file, (state.config && state.config.bedrockKind) || 'stable');
+      if (!r || !r.ok) {
+        hint.textContent = '导入失败：' + ((r && r.error) || '启动器没有返回原因');
+        return;
+      }
+      const list = Array.isArray(r.installed) ? r.installed : [];
+      const skipped = Array.isArray(r.skipped) ? r.skipped : [];
+      hint.textContent = `已导入 ${list.length} 个包${skipped.length ? `，跳过 ${skipped.length} 个` : ''}：${r.baseDir || ''}`;
+      result.innerHTML = `
+        ${list.length ? `<div style="font-size:13px;line-height:1.9">${list.map((p) => `<div>✓ ${escapeHtml(p.name)} · ${p.type === 'behavior' ? '行为包' : '资源包'}</div>`).join('')}</div>` : ''}
+        ${skipped.length ? `<div class="hint-text" style="margin-top:8px;color:#fca5a5">${skipped.map((x) => escapeHtml(x)).join('<br>')}</div>` : ''}
+        <button class="btn sm ghost" id="bedrock-addon-open" type="button" style="margin-top:12px">打开 Add-On 文件夹</button>
+      `;
+      const open = root.querySelector('#bedrock-addon-open');
+      if (open) open.onclick = () => api.openPath(r.baseDir);
+    } catch (e) {
+      hint.textContent = '导入失败：' + e.message;
+    }
+  };
+
+  // 在线 Add-On：CurseForge 搜索 → 取文件 → 下载到临时目录 → 复用本地导入
+  const cfQ = root.querySelector('#bd-cf-q');
+  const cfBtn = root.querySelector('#bd-cf-search');
+  const cfStatus = root.querySelector('#bd-cf-status');
+  const cfList = root.querySelector('#bd-cf-list');
+  if (!cfQ || !cfBtn || !cfStatus || !cfList) return;
+
+  const kind = (state.config && state.config.bedrockKind) || 'stable';
+  let cfItems = [];
+  let cfQuery = '';
+
+  const cfCard = (m) => `
+    <div class="card" style="padding:14px;display:flex;gap:12px;align-items:flex-start">
+      ${m.icon ? `<img src="${escapeHtml(m.icon)}" alt="" style="width:46px;height:46px;border-radius:10px;object-fit:cover;flex:none">` : ''}
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:600;font-size:13px">${escapeHtml(m.name)}</div>
+        <div class="hint-text" style="margin-top:4px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(m.summary || '')}</div>
+        <div class="hint-text" style="margin-top:6px">${escapeHtml(m.authors || '未知作者')} · ${Number(m.downloadCount || 0).toLocaleString()} 次下载</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:none">
+        <button class="btn primary sm" data-bdcf-install="${m.id}" type="button">下载并导入</button>
+        ${m.url ? `<button class="btn sm ghost" data-bdcf-open="${escapeHtml(m.url)}" type="button">网页</button>` : ''}
+      </div>
+    </div>`;
+
+  const paintCf = (append) => {
+    const html = cfItems.map(cfCard).join('');
+    if (append) cfList.insertAdjacentHTML('beforeend', html);
+    else cfList.innerHTML = html || '<div class="empty-tip">没有搜到 Add-On</div>';
+    cfList.querySelectorAll('[data-bdcf-install]').forEach((b) => {
+      b.onclick = async () => {
+        const m = cfItems.find((x) => String(x.id) === b.dataset.bdcfInstall);
+        if (!m) return;
+        b.disabled = true;
+        cfStatus.textContent = `正在获取「${m.name}」的文件列表…`;
+        try {
+          const files = await api.bedrockCfFiles(m.id);
+          if (!Array.isArray(files) || !files.length) {
+            cfStatus.textContent = '这个 Add-On 没有可下载的 .mcaddon / .mcpack 文件';
+            return;
+          }
+          cfStatus.textContent = `正在下载并导入 ${files[0].name}…`;
+          const r = await api.bedrockCfInstall(files[0], kind);
+          if (!r || !r.ok) {
+            cfStatus.textContent = '导入失败：' + ((r && r.error) || '启动器没有返回原因');
+            return;
+          }
+          const list = Array.isArray(r.installed) ? r.installed : [];
+          const skipped = Array.isArray(r.skipped) ? r.skipped : [];
+          cfStatus.textContent = `已导入 ${list.length} 个包${skipped.length ? `，跳过 ${skipped.length} 个` : ''}：${r.baseDir || ''}`;
+        } catch (e) {
+          cfStatus.textContent = '导入失败：' + e.message;
+        } finally {
+          b.disabled = false;
+        }
+      };
+    });
+    cfList.querySelectorAll('[data-bdcf-open]').forEach((b) => {
+      b.onclick = () => api.openUrl(b.dataset.bdcfOpen);
+    });
+  };
+
+  const doCfSearch = async () => {
+    const q = String(cfQ.value || '').trim();
+    if (!String(state.config.apiKey || '').trim()) {
+      cfStatus.textContent = '需要先在「设置 → 网络与下载」填写 CurseForge API Key，才能在线搜索。也可以直接用上面的本地导入。';
+      cfList.innerHTML = '';
+      return;
+    }
+    cfBtn.disabled = true;
+    cfStatus.textContent = '正在搜索…';
+    try {
+      cfQuery = q;
+      cfItems = await api.bedrockCfSearch(q, 0);
+      paintCf(false);
+      cfStatus.textContent = cfItems.length ? `找到 ${cfItems.length} 个 Add-On` : '';
+    } catch (e) {
+      cfStatus.textContent = '搜索失败：' + e.message;
+    } finally {
+      cfBtn.disabled = false;
+    }
+  };
+
+  cfBtn.onclick = doCfSearch;
+  cfQ.onkeydown = (ev) => { if (ev.key === 'Enter') doCfSearch(); };
+  const mcpedl = root.querySelector('#bd-cf-mcpedl');
+  if (mcpedl) mcpedl.onclick = () => api.openUrl('https://mcpedl.com/category/addons/');
+  const cfWeb = root.querySelector('#bd-cf-web');
+  if (cfWeb) cfWeb.onclick = () => api.openUrl('https://www.curseforge.com/minecraft-bedrock/addons');
+}
+
 let centerCat = 'mod';
 
 function renderCenter(page) {
@@ -10845,16 +11973,8 @@ function renderCenter(page) {
     const box = $('center-body');
     box.innerHTML = '';
     if (centerEdition === 'bedrock') {
-      box.innerHTML = `
-        <div class="glass" style="padding:24px;text-align:center">
-          <div style="font-size:32px;margin-bottom:10px">🌍</div>
-          <div style="font-weight:600;margin-bottom:6px">基岩版资源中心</div>
-          <div style="color:var(--text-dim);font-size:13px;margin-bottom:16px">
-            基岩版（Bedrock Edition）的资源包、光影、Add-On 等格式与 Java 版完全不同。<br>
-            后续版本将支持基岩版资源的搜索与安装，敬请期待。
-          </div>
-        </div>
-      `;
+      box.innerHTML = bedrockAddonPanelHtml();
+      bindBedrockAddonPanel(box);
       return;
     }
     if (centerCat === 'mod') renderModCategory(inst, box);
@@ -11031,18 +12151,10 @@ function renderModCategory(inst, box, opts = {}) {
 
   const renderOnline = (source) => {
     const mbox = $('mod-content');
-    // 基岩版 Add-On 占位
+    // 基岩版 Add-On：本地导入，不联网搜索、不内置资源
     if (source === 'bedrock') {
-      mbox.innerHTML = `
-        <div class="glass" style="padding:24px;text-align:center">
-          <div style="font-size:32px;margin-bottom:10px">🌍</div>
-          <div style="font-weight:600;margin-bottom:6px">基岩版 Add-On</div>
-          <div style="color:var(--text-dim);font-size:13px;margin-bottom:16px">
-            基岩版（Bedrock Edition）的模组/插件称为 Add-On，格式为 .mcaddon / .mcpack。<br>
-            此启动器暂不支持基岩版 Add-On 的搜索与安装，后续版本将支持。
-          </div>
-        </div>
-      `;
+      mbox.innerHTML = bedrockAddonPanelHtml();
+      bindBedrockAddonPanel(mbox);
       return;
     }
     // CurseForge 没配 Key 时直接给引导，不发起必失败的网络请求
@@ -11681,95 +12793,165 @@ function renderServers(page) {
     </div>
 
     <div class="lan-grid">
-      <div class="glass lan-card lan-wide" id="lan-card-taohua">
-        <div class="lan-title">🏺 陶瓦联机<span class="lan-ok" id="tc-badge">已内置</span><button class="btn sm lan-leave" id="tc-leave" type="button">退出房间</button></div>
-        <div class="lan-desc">跨网络联机，效果跟同一个局域网一样。这套工具<b>已经随启动器装好了</b>，不用下载、不用自己找文件、不用开它的窗口：建房只要填个房间名，加入只要填房主的房间号。</div>
+      <div class="glass lan-card lan-wide" id="lan-card-unified">
+        <div class="lan-title">🌐 联机中心<span class="lan-ok" id="hub-badge">星云直连 + 全启动器</span><button class="btn sm lan-leave" id="hub-leave" type="button">退出联机</button></div>
+        <div class="lan-desc">加入和创建已经分开：加入页只放加入相关，创建页只放开房相关，互不混用。通用通道支持 P 邀请码、U 房号、12 位 EasyTier 房号、IP / 域名直连；星云直连单独保留，仅星云启动器内部使用。<br>Frp、ZeroTier、Tailscale、Radmin 等给出最终地址的工具也能直接进服。</div>
 
-        <div class="tc-grid">
-          <div class="tc-panel">
-            <div class="tc-head">🏠 我来建房</div>
-            <div class="field">
-              <label>房间名</label>
-              <input class="input" id="tc-host-name" placeholder="随便起一个，朋友填一样的名字也能进">
+        <div class="tabs" id="hub-tabs" style="margin-top:14px">
+          <button class="tab active" data-hub-tab="join" type="button">加入房间</button>
+          <button class="tab" data-hub-tab="host" type="button">创建房间</button>
+        </div>
+
+        <div class="tc-status" id="hub-status">空闲。选择开房或加入后，状态和房卡会显示在这里。</div>
+        <div class="tc-room" id="hub-room"></div>
+
+        <div id="hub-pane-join">
+          <div class="tc-grid">
+            <div class="tc-panel">
+              <div class="field">
+                <label>房卡 / 邀请码 / 房号</label>
+                <input class="input" id="unified-code" placeholder="P0ABB-017LK-S1DZ1-0205E、U/RFT2-KZDQ-E9P5-1BJT、127.0.0.1:25565；内部星云房卡 NEBULA:房间@地址">
+              </div>
+              <div class="field">
+                <label>星云房间名（仅内部房卡没带名字时用）</label>
+                <input class="input" id="unified-room" value="nebula" placeholder="默认 nebula">
+              </div>
             </div>
-            <div class="field">
-              <label>我的游戏名（可选）</label>
-              <input class="input" id="tc-host-player" placeholder="显示给房间里的人">
-            </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn primary" id="tc-host" type="button">建房并进世界</button>
-              <button class="btn" id="tc-host-only" type="button">只建房</button>
+            <div class="tc-panel">
+              <div class="field">
+                <label>我的游戏名（陶瓦可选）</label>
+                <input class="input" id="tc-join-player" placeholder="显示给房间里的人">
+              </div>
+              <div class="field">
+                <label>PCL 自定义节点（可选）</label>
+                <input class="input" id="unified-node" placeholder="留空自动选；填了双方必须一致">
+              </div>
+              <div class="field">
+                <label>实例（加入后启动）</label>
+                <select class="input" id="hub-inst"></select>
+              </div>
+              <label class="row" style="gap:8px;cursor:pointer">
+                <input type="checkbox" id="hub-join-launch" checked> 加入后自动启动游戏
+              </label>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn primary" id="unified-join" type="button">识别并加入</button>
+              </div>
+              <div class="hint-text" id="unified-hint">粘贴后自动判断通道，不需要先选。通用通道包括 PCL / 陶瓦 / EasyTier / IP / 域名 / Frp / ZeroTier / Tailscale / Radmin；星云内部房卡单独走星云直连。</div>
             </div>
           </div>
-          <div class="tc-panel">
-            <div class="tc-head">🚪 我要加入</div>
-            <div class="field">
-              <label>房间号 / 房间名</label>
-              <input class="input" id="tc-join-code" placeholder="U/XXXX-XXXX-XXXX-XXXX 或房主填的房间名">
+
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer;font-weight:600;font-size:13px">高级加入参数（PCL 本机端口 / EasyTier 节点与手动参数）</summary>
+            <div class="tc-grid" style="margin-top:10px">
+              <div class="tc-panel">
+                <div class="tc-head">🧩 PCL 邀请码</div>
+                <div class="field"><label>本机端口</label><input class="input" id="hub-join-port" value="25565" inputmode="numeric"></div>
+                <div class="hint-text">用 P 邀请码加入后，游戏里连 127.0.0.1:本机端口；自定义节点填在上面的「PCL 自定义节点」。</div>
+              </div>
+              <div class="tc-panel">
+                <div class="tc-head">🛰️ EasyTier 手动参数</div>
+                <div class="field"><label>网络名称</label><input class="input" id="manual-name" placeholder="对方工具里的 network-name"></div>
+                <div class="field"><label>网络密钥</label><input class="input" id="manual-secret" placeholder="对方工具里的 network-secret"></div>
+                <div class="field"><label>中继 / 节点</label><input class="input" id="manual-peer" placeholder="tcp://节点:11010；留空用内置候选"></div>
+                <div class="field"><label>EasyTier 公共节点（可选）</label><input class="input" id="hub-join-et-nodes" placeholder="12 位房间号加入时用；留空自动选"></div>
+                <div class="field"><label>房主 MC 端口</label><input class="input" id="manual-port" placeholder="25565"></div>
+                <div class="field"><label>本机端口</label><input class="input" id="manual-local-port" placeholder="25565"></div>
+                <div class="row" style="gap:8px;flex-wrap:wrap">
+                  <button class="btn" id="manual-join" type="button">按这组参数加入</button>
+                </div>
+                <div class="hint-text">网络名称和密钥必须和对方完全一致；中继也要能互通。</div>
+                <div class="hint-text">EasyTier 需要系统安装 Npcap；星云不随包分发。未安装请
+                  <button class="btn" type="button" data-lan-page="https://npcap.com/#download" style="padding:4px 10px;font-size:12px">下载 Npcap</button>
+                </div>
+              </div>
             </div>
-            <div class="field">
-              <label>我的游戏名（可选）</label>
-              <input class="input" id="tc-join-player" placeholder="显示给房间里的人">
+          </details>
+        </div>
+
+        <div id="hub-pane-host" hidden>
+          <div class="tc-grid">
+            <div class="tc-panel">
+              <div class="field" id="hub-name-field">
+                <label>房间名</label>
+                <input class="input" id="hub-host-name" value="nebula" placeholder="同一个房间名，朋友也能直接填">
+              </div>
+              <div class="field" id="hub-host-player-field" hidden>
+                <label>我的游戏名（陶瓦可选）</label>
+                <input class="input" id="hub-host-player" placeholder="显示给房间里的人">
+              </div>
+              <div class="field" id="hub-edition-field">
+                <label>游戏版本</label>
+                <select class="input" id="hub-host-edition">
+                  <option value="java">Java 版（TCP 25565）</option>
+                  <option value="bedrock">基岩版（UDP 19132）</option>
+                </select>
+              </div>
+              <div class="field" id="hub-port-field">
+                <label>游戏端口</label>
+                <input class="input" id="hub-host-port" value="25565" inputmode="numeric">
+              </div>
+              <div class="field" id="hub-host-inst-field">
+                <label>启动实例（可选）</label>
+                <select class="input" id="hub-host-inst"></select>
+              </div>
+              <div class="field" id="hub-host-world-field">
+                <label>存档（可选）</label>
+                <select class="input" id="hub-host-world"></select>
+              </div>
+              <label class="row" style="gap:8px;cursor:pointer">
+                <input type="checkbox" id="hub-host-launch" checked> 创建后启动游戏并进入存档
+              </label>
             </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn primary" id="tc-join" type="button">加入并进游戏</button>
+            <div class="tc-panel">
+              <div class="field">
+                <label>联机方式</label>
+                <select class="input" id="hub-method">
+                  <option value="pcl">PCL 邀请码：PCL2 等可粘贴</option>
+                  <option value="tc">陶瓦房号：HMCL / FCL / PCL CE</option>
+                  <option value="easy">EasyTier 房间：任意 EasyTier 工具</option>
+                  <option value="nebula">星云直连（仅星云内部）</option>
+                </select>
+              </div>
+              <div class="field" id="hub-host-node-field" hidden>
+                <label>PCL 自定义节点（可选）</label>
+                <input class="input" id="hub-host-node" placeholder="留空自动选；填了双方必须一致">
+              </div>
+              <div id="hub-host-et-field" hidden>
+                <div class="field">
+                  <label>EasyTier 公共节点（双方一致；留空用内置候选）</label>
+                  <input class="input" id="hub-host-et-nodes" placeholder="tcp://easytier.weiai.org.cn:11010">
+                </div>
+                <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+                  <button class="btn sm" id="hub-et-probe" type="button">检测节点连通性</button>
+                  <span class="hint-text">开打前先握一次手</span>
+                </div>
+                <div class="lan-ips" id="hub-et-probe-box" style="display:none"></div>
+              </div>
+              <button class="btn primary" id="hub-host" type="button">创建房间</button>
+              <div class="hint-text" id="hub-host-hint">通用通道默认走 PCL 邀请码，PCL / 陶瓦 / EasyTier 可跨启动器加入；星云直连是内部独立通道，只和星云启动器互连。</div>
+
+              <details id="hub-host-manual" hidden style="margin-top:12px">
+                <summary style="cursor:pointer;font-weight:600;font-size:13px">EasyTier 手动参数建房（给其他 EasyTier 工具用）</summary>
+                <div class="tc-grid" style="margin-top:10px">
+                  <div class="tc-panel">
+                    <div class="field"><label>网络名称</label><input class="input" id="manual-host-name" placeholder="对方工具里的 network-name"></div>
+                    <div class="field"><label>网络密钥</label><input class="input" id="manual-host-secret" placeholder="对方工具里的 network-secret"></div>
+                    <div class="field"><label>中继 / 节点</label><input class="input" id="manual-host-peer" placeholder="tcp://节点:11010；留空用内置候选"></div>
+                    <div class="field"><label>房主 MC 端口</label><input class="input" id="manual-host-port" placeholder="25565"></div>
+                    <div class="row" style="gap:8px;flex-wrap:wrap">
+                      <button class="btn" id="manual-host" type="button">按这组参数建房</button>
+                    </div>
+                    <div class="hint-text">网络名称和密钥必须和对方完全一致；中继也要能互通。</div>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </div>
 
-        <div class="tc-status" id="tc-status">正在读取陶瓦联机状态…</div>
-        <div class="tc-room" id="tc-room"></div>
-        <div class="tc-foot">
-          <span class="hint-text">内置 <b>Terracotta | 陶瓦联机</b> © Burning_TNT · AGPL-3.0-or-later</span>
-        </div>
+        <div class="tc-foot"><span class="hint-text">星云直连为自研核心；PCL / EasyTier / 陶瓦按各自公开接口调用，互不复制源码。</span></div>
       </div>
 
-      <div class="glass lan-card lan-wide" id="lan-card-easytier">
-        <div class="lan-title">🛰️ EasyTier 联机<span class="lan-ok" id="et-badge">已内置</span><button class="btn sm lan-leave" id="et-leave" type="button">退出房间</button></div>
-        <div class="lan-desc">另一种跨网络联机方式，和陶瓦互补：陶瓦是点对点打洞，EasyTier 组的是<b>虚拟局域网</b>，接上以后两边网段整个互通。同样已经装好了，不用下载、也不用自己找文件。</div>
-
-        <div class="field" style="margin-top:12px">
-          <label>公共节点（双方要填一样；留空则用内置候选）</label>
-          <input class="input" id="et-nodes" placeholder="tcp://easytier.weiai.org.cn:11010；也可以填同一个局域网里房主的「本机地址:11010」">
-        </div>
-        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn sm" id="et-probe" type="button">检测节点连通性</button>
-          <span class="hint-text">开打前先握一次手；内置候选会自动选延迟最低的，连得上再建房</span>
-        </div>
-        <div class="lan-ips" id="et-probe-box" style="display:none"></div>
-
-        <div class="tc-grid">
-          <div class="tc-panel">
-            <div class="tc-head">🏠 我来建房</div>
-            <div class="field">
-              <label>房间名</label>
-              <input class="input" id="et-host-name" placeholder="随便起一个，朋友填一样的名字也能进">
-            </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn primary" id="et-host" type="button">建房并进世界</button>
-              <button class="btn" id="et-host-only" type="button">只建房</button>
-            </div>
-            <div class="hint-text" style="margin-top:6px">建房要装虚拟网卡，所以第一次点会弹一次管理员授权；加入方不需要。</div>
-          </div>
-          <div class="tc-panel">
-            <div class="tc-head">🚪 我要加入</div>
-            <div class="field">
-              <label>房间号 / 房间名</label>
-              <input class="input" id="et-join-code" placeholder="房主给的房间号，或房主填的房间名">
-            </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn primary" id="et-join" type="button">加入并进游戏</button>
-            </div>
-            <div class="hint-text" style="margin-top:6px">加入方会自动把 <b>localhost:25565</b> 接到房主那边，进游戏直接连本机地址就行。</div>
-          </div>
-        </div>
-
-        <div class="tc-status" id="et-status">正在读取 EasyTier 状态…</div>
-        <div class="tc-room" id="et-room"></div>
-        <div class="tc-foot">
-          <span class="hint-text">内置 <b>EasyTier</b> © EasyTier 项目组及贡献者 · LGPL-3.0 · 许可证原文见 resources/tools/easytier/LICENSE.txt</span>
-        </div>
-      </div>
 
       <div class="glass lan-card lan-wide" id="lan-card-msrv">
         <div class="lan-title">🖥️ 一键开服<span class="lan-ok">独立服务端</span></div>
@@ -12035,9 +13217,136 @@ function renderServers(page) {
     } catch {
       if (lanWorldSel.isConnected) lanWorldSel.innerHTML = '<option value="">（读取失败）</option>';
     }
+    syncHubWorld();
   };
+  const hubHostInstSel = $('hub-host-inst');
+  const hubHostWorldSel = $('hub-host-world');
+  const syncHubWorld = () => {
+    if (hubHostInstSel && hubHostInstSel.isConnected) {
+      const keep = hubHostInstSel.value || lanInstSel.value;
+      hubHostInstSel.innerHTML = lanInstSel.innerHTML;
+      hubHostInstSel.value = keep;
+      if (hubHostInstSel.value !== keep) hubHostInstSel.value = lanInstSel.value;
+    }
+    if (hubHostWorldSel && hubHostWorldSel.isConnected) {
+      const keep = hubHostWorldSel.value || lanWorldSel.value;
+      hubHostWorldSel.innerHTML = lanWorldSel.innerHTML;
+      hubHostWorldSel.value = keep;
+      if (hubHostWorldSel.value !== keep) hubHostWorldSel.value = lanWorldSel.value;
+    }
+  };
+  if (hubHostInstSel) {
+    hubHostInstSel.onchange = () => {
+      lanInstSel.value = hubHostInstSel.value;
+      lanInstSel.dispatchEvent(new Event('change'));
+    };
+  }
+  if (hubHostWorldSel) {
+    hubHostWorldSel.onchange = () => { lanWorldSel.value = hubHostWorldSel.value; };
+  }
+  syncHubWorld();
   lanInstSel.onchange = loadLanWorlds;
+  const hubInstSel = $('hub-inst');
+  if (hubInstSel) {
+    hubInstSel.innerHTML = lanInstSel.innerHTML;
+    hubInstSel.value = lanInstSel.value;
+    hubInstSel.onchange = () => {
+      lanInstSel.value = hubInstSel.value;
+      lanInstSel.dispatchEvent(new Event('change'));
+    };
+  }
+  lanInstSel.addEventListener('change', () => {
+    if (hubInstSel && hubInstSel.isConnected) hubInstSel.value = lanInstSel.value;
+  });
   loadLanWorlds();
+
+  /* ---------- 联机中心：统一状态 / 复制 / 方式切换 ---------- */
+  let hubStatusLock = false;
+  const hubSetStatus = (html, force = false) => {
+    if (hubStatusLock && !force) return;
+    const el = $('hub-status');
+    if (el && el.isConnected) el.innerHTML = html;
+  };
+  const hubSetRoom = (html, force = false) => {
+    if (hubStatusLock && !force) return;
+    const el = $('hub-room');
+    if (!el || !el.isConnected) return;
+    el.innerHTML = html || '';
+    el.querySelectorAll('[data-et-copy],[data-nb-copy],[data-copy-code],[data-hub-copy],[data-tc-copy]').forEach((b) => {
+      b.onclick = async () => {
+        const val = b.dataset.etCopy || b.dataset.nbCopy || b.dataset.copyCode || b.dataset.hubCopy || b.dataset.tcCopy || '';
+        try { await navigator.clipboard.writeText(val); toast('已复制'); }
+        catch { toast('复制失败，请手动选中', true); }
+      };
+    });
+  };
+  const hubLeaveAll = async () => {
+    state.nbHostCard = '';
+    await Promise.allSettled([
+      api.nebulaLeave().catch(() => {}),
+      api.nebulaInternalLeave().catch(() => {}),
+      api.easytierLeave().catch(() => {}),
+      api.scaffoldLeave().catch(() => {}),
+    ]);
+  };
+  const hubTabTo = (tab) => {
+    document.querySelectorAll('#hub-tabs .tab').forEach((b) => {
+      b.classList.toggle('active', b.dataset.hubTab === tab);
+    });
+    const join = $('hub-pane-join');
+    const host = $('hub-pane-host');
+    if (join) join.hidden = tab !== 'join';
+    if (host) host.hidden = tab !== 'host';
+  };
+  document.querySelectorAll('#hub-tabs .tab').forEach((b) => {
+    b.onclick = () => hubTabTo(b.dataset.hubTab);
+  });
+
+  const hubMethodSel = $('hub-method');
+  const hubSyncMethod = () => {
+    const m = (hubMethodSel && hubMethodSel.value) || 'pcl';
+    const nameField = $('hub-name-field');
+    const playerField = $('hub-host-player-field');
+    const editionField = $('hub-edition-field');
+    const portField = $('hub-port-field');
+    const nodeField = $('hub-host-node-field');
+    const etField = $('hub-host-et-field');
+    const manualBox = $('hub-host-manual');
+    const hint = $('hub-host-hint');
+    const showName = m === 'nebula' || m === 'tc' || m === 'easy';
+    const showPlayer = m === 'tc';
+    const showEdition = m === 'nebula';
+    const showPort = m === 'nebula' || m === 'pcl';
+    const showNode = m === 'pcl';
+    const showEt = m === 'easy';
+    if (nameField) nameField.hidden = !showName;
+    if (playerField) playerField.hidden = !showPlayer;
+    if (editionField) editionField.hidden = !showEdition;
+    if (portField) portField.hidden = !showPort;
+    if (nodeField) nodeField.hidden = !showNode;
+    if (etField) etField.hidden = !showEt;
+    if (manualBox) manualBox.hidden = !showEt;
+    if (hint) {
+      hint.textContent = m === 'pcl'
+        ? '生成 P 开头邀请码，PCL2 等实现同一约定的启动器可粘贴加入。'
+        : m === 'tc'
+          ? '生成 U/ 房号，HMCL / FCL / PCL CE 可粘贴；建房后进游戏按 Esc 开放局域网。'
+          : m === 'easy'
+            ? '生成 12 位房间号，任意 EasyTier 工具都能用；房主和客人都要能连上节点。'
+            : m === 'nebula'
+              ? '仅星云启动器内部使用；只和星云客户端互连，不与其他启动器混连。'
+              : '';
+    }
+  };
+  if (hubMethodSel) {
+    hubMethodSel.onchange = hubSyncMethod;
+    hubSyncMethod();
+  }
+  const hubEditionSel = $('hub-host-edition');
+  if (hubEditionSel) hubEditionSel.onchange = () => {
+    const port = $('hub-host-port');
+    if (port) port.value = hubEditionSel.value === 'bedrock' ? '19132' : '25565';
+  };
 
   const renderIps = (ips) => {
     const box = $('lan-ips');
@@ -12244,9 +13553,11 @@ function renderServers(page) {
       };
     });
 
-    // 下载页：走内置浏览器（错误提示里的「手动下载」就靠它）
+    // 下载页：陶瓦 / 红石等联机工具一律交给系统默认浏览器，不塞进启动器内置浏览器
     box.querySelectorAll('[data-lan-page]').forEach((b) => {
-      b.onclick = () => api.openUrl(b.dataset.lanPage);
+      b.onclick = () => {
+        api.openExternal(b.dataset.lanPage).catch((e) => toast(ipcErrorText(e), true));
+      };
     });
 
     // 手动指定可执行文件：所有工具都有，右键清除（清掉后回落到内置 / 托管 / 自动探测）
@@ -12287,13 +13598,20 @@ function renderServers(page) {
       };
     });
 
-    // 内置工具已经在上面卡片无窗口集成：直接启动 exe 只会强开系统浏览器弹它的 Web 界面，
-    // 多余还添乱。这里点一下直接滚回上面对应的联机卡片。
+    // 内置工具已经在联机中心无窗口集成：直接启动 exe 只会强开系统浏览器弹它的 Web 界面，
+    // 多余还添乱。这里点一下直接切到创建房间，并选好对应联机方式。
     box.querySelectorAll('[data-lan-goto]').forEach((b) => {
       b.onclick = () => {
-        const anchor = $(`lan-card-${b.dataset.lanGoto}`);
+        const method = b.dataset.lanGoto === 'taohua' ? 'tc'
+          : b.dataset.lanGoto === 'easytier' ? 'easy' : '';
+        if (method && $('hub-method')) {
+          $('hub-method').value = method;
+          hubTabTo('host');
+          hubSyncMethod();
+        }
+        const anchor = $('lan-card-unified');
         if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast('用上面的卡片直接建房 / 加入就行');
+        toast('用联机中心的「创建房间」直接开房');
       };
     });
   };
@@ -12333,6 +13651,7 @@ function renderServers(page) {
   const tcSetStatus = (html) => {
     const el = $('tc-status');
     if (el && el.isConnected) el.innerHTML = html;
+    hubSetStatus(html);
   };
 
   const tcRoomHtml = (code) => '房间号（发给朋友，或让朋友直接填上面的房间名）：<br>'
@@ -12340,6 +13659,7 @@ function renderServers(page) {
     + `<button class="btn sm" data-tc-copy="${escapeHtml(code)}" type="button">复制房间号</button>`;
 
   const tcSetRoom = (html) => {
+    hubSetRoom(html);
     const box = $('tc-room');
     if (!box || !box.isConnected) return;
     box.innerHTML = html;
@@ -12401,7 +13721,7 @@ function renderServers(page) {
   // 建房：withWorld = 顺手把存档也启动起来，玩家只要在游戏里开一下局域网
   const tcHost = async (withWorld) => {
     if (tcBusy) return;
-    const name = tcPlayerOf('tc-host-name');
+    const name = tcPlayerOf('tc-host-name') || tcPlayerOf('hub-host-name');
     if (!name) return toast('先给房间起个名字', true);
     const instId = lanInstSel.value;
     const world = lanWorldSel.value;
@@ -12411,7 +13731,7 @@ function renderServers(page) {
     tcSetBusy(true);
     tcSetStatus('正在拉起陶瓦联机…');
     let loading = false;
-    const pending = api.scaffoldHost({ name, player: tcPlayerOf('tc-host-player') });
+    const pending = api.scaffoldHost({ name, player: tcPlayerOf('tc-host-player') || tcPlayerOf('hub-host-player') });
     try {
       if (withWorld) {
         showLoading(`正在建房并进入世界「${world}」…`);
@@ -12434,12 +13754,13 @@ function renderServers(page) {
     }
   };
 
-  const tcJoin = async () => {
+  const tcJoin = async (launch = true, codeArg = '') => {
     if (tcBusy) return;
-    const raw = tcPlayerOf('tc-join-code');
+    const raw = (codeArg || ($('tc-join-code') && $('tc-join-code').value.trim())
+      || ($('unified-code') && $('unified-code').value.trim()) || '');
     if (!raw) return toast('请填房主的房间号或房间名', true);
     const instId = lanInstSel.value;
-    if (!instId) return toast('请先选择要用来联机的实例', true);
+    if (launch && !instId) return toast('请先选择要用来联机的实例', true);
 
     tcSetBusy(true);
     tcSetStatus('正在拉起陶瓦联机…');
@@ -12449,10 +13770,14 @@ function renderServers(page) {
       if (!r.url) throw new Error('没能拿到服务器地址');
       try { await navigator.clipboard.writeText(r.url); } catch { /* 复制不了也没关系，下面照样显示 */ }
       tcSetRoom(`服务器地址（已复制）：<span class="lan-ip">${escapeHtml(r.url)}</span>${tcPlayers(r.profiles)}`);
-      showLoading('正在进入服务器…');
-      loading = true;
-      await api.launch(instId, { quickPlayServer: r.url });
-      toast('已进入房间。1.20 以下不会自动进服，用「多人游戏 → 直接连接」粘贴刚复制的地址即可');
+      if (launch) {
+        showLoading('正在进入服务器…');
+        loading = true;
+        await api.launch(instId, { quickPlayServer: r.url });
+        toast('已进入房间。1.20 以下不会自动进服，用「多人游戏 → 直接连接」粘贴刚复制的地址即可');
+      } else {
+        toast('已加入房间，游戏里连 ' + r.url);
+      }
     } catch (e) {
       if (e.message !== '已取消') toast('加入失败：' + e.message, true);
     } finally {
@@ -12466,7 +13791,7 @@ function renderServers(page) {
   const tcHostOnlyBtn = $('tc-host-only');
   if (tcHostOnlyBtn) tcHostOnlyBtn.onclick = () => tcHost(false);
   const tcJoinBtn = $('tc-join');
-  if (tcJoinBtn) tcJoinBtn.onclick = tcJoin;
+  if (tcJoinBtn) tcJoinBtn.onclick = () => tcJoin();
 
   const tcLeaveBtn = $('tc-leave');
   if (tcLeaveBtn) tcLeaveBtn.onclick = async () => {
@@ -12480,8 +13805,10 @@ function renderServers(page) {
   const etSetStatus = (html) => {
     const el = $('et-status');
     if (el && el.isConnected) el.innerHTML = html;
+    hubSetStatus(html);
   };
   const etSetRoom = (html) => {
+    hubSetRoom(html);
     const box = $('et-room');
     if (!box || !box.isConnected) return;
     box.innerHTML = html;
@@ -12504,9 +13831,35 @@ function renderServers(page) {
       : '';
     if (s.phase === 'offline') { etSetStatus('未联机'); return; }
     if (s.phase === 'starting') {
+      if (s.mode === 'pcl') {
+        const pclCode = s.pclCode || s.code || '';
+        etSetStatus(s.role === 'host'
+          ? `PCL 邀请码已生成（<b>${escapeHtml(pclCode)}</b>），正在等 EasyTier 启动…${list}`
+          : `正在按邀请码寻找房主…${list}`);
+        if (s.role === 'host' && pclCode) {
+          etSetRoom(`PCL 邀请码（发给朋友粘贴）：<br><span class="lan-ip tc-code">${escapeHtml(pclCode)}</span>`
+            + `<button class="btn sm" data-et-copy="${escapeHtml(pclCode)}" type="button">复制邀请码</button>`
+            + (s.address ? `<br>房主虚拟地址：<span class="lan-ip">${escapeHtml(s.address)}</span>` : ''));
+        }
+      } else {
+        etSetStatus(s.role === 'host'
+          ? `房已经建好（房间号 <b>${escapeHtml(s.code)}</b>），正在等朋友进网${list}`
+          : `正在寻找房主…${list}`);
+      }
+      return;
+    }
+    if (s.mode === 'pcl') {
+      const pclCode = s.pclCode || s.code || '';
+      const pclAddr = s.address || '127.0.0.1:25565';
       etSetStatus(s.role === 'host'
-        ? `房已经建好（房间号 <b>${escapeHtml(s.code)}</b>），正在等朋友进网${list}`
-        : `正在寻找房主…${list}`);
+        ? `已经联通（PCL 邀请码 <b>${escapeHtml(pclCode)}</b>）${list}`
+        : `已经接通，游戏里连 <b>${escapeHtml(pclAddr)}</b> 即可${list}`);
+      etSetRoom(s.role === 'host'
+        ? `PCL 邀请码（发给朋友粘贴）：<br><span class="lan-ip tc-code">${escapeHtml(pclCode)}</span>`
+          + `<button class="btn sm" data-et-copy="${escapeHtml(pclCode)}" type="button">复制邀请码</button>`
+          + (s.address ? `<br>房主虚拟地址：<span class="lan-ip">${escapeHtml(s.address)}</span>` : '')
+        : `游戏里连 <b>${escapeHtml(pclAddr)}</b>`
+          + `<button class="btn sm" data-et-copy="${escapeHtml(pclAddr)}" type="button">复制地址</button>`);
       return;
     }
     etSetStatus(s.role === 'host'
@@ -12518,17 +13871,17 @@ function renderServers(page) {
   let etBusy = false;
   const etSetBusy = (busy) => {
     etBusy = busy;
-    ['et-host', 'et-host-only', 'et-join'].forEach((id) => {
+    ['et-host', 'et-host-only', 'et-join', 'pcl-host', 'pcl-join'].forEach((id) => {
       const b = $(id);
       if (b && b.isConnected) b.disabled = busy;
     });
   };
 
-  const etNodes = () => (($('et-nodes') && $('et-nodes').value.trim()) || '');
+  const etNodes = (id = 'hub-host-et-nodes') => (($(id) && $(id).value.trim()) || '');
 
   /* 节点探测：内置公共节点随时可能失效，与其干等超时，不如提前说清楚 */
   const etSetProbe = (html) => {
-    const box = $('et-probe-box');
+    const box = $('hub-et-probe-box');
     if (!box) return;
     box.innerHTML = html || '';
     box.style.display = html ? 'block' : 'none';
@@ -12538,11 +13891,11 @@ function renderServers(page) {
   const etProbe = async (silent) => {
     if (etProbing) return;
     etProbing = true;
-    const btn = $('et-probe');
+    const btn = $('hub-et-probe');
     if (btn) btn.disabled = true;
     if (!silent) etSetProbe('<span class="hint-text">正在探测节点…</span>');
     try {
-      const r = await api.easytierProbe(etNodes());
+      const r = await api.easytierProbe(etNodes('hub-host-et-nodes'));
       const probes = (r && r.probes) || [];
       if (!probes.length) {
         etSetProbe('<span class="hint-text">没有可用的节点地址。</span>');
@@ -12570,7 +13923,7 @@ function renderServers(page) {
     }
   };
 
-  const etProbeBtn = $('et-probe');
+  const etProbeBtn = $('hub-et-probe');
   if (etProbeBtn) etProbeBtn.onclick = () => etProbe(false);
 
   const etRoomHtml = (code, address) => '房间号（发给朋友，或让朋友直接填上面的房间名）：<br>'
@@ -12587,9 +13940,12 @@ function renderServers(page) {
       return;
     }
     if (badge && badge.isConnected) { badge.textContent = '已就绪'; badge.classList.remove('bad'); }
-    const input = $('et-nodes');
-    if (input && (info.nodes || []).length) input.value = info.nodes.join(' ');
-    else if (input && (info.defaults || []).length) input.placeholder = `${info.defaults.join(' / ')}（留空即用这些）`;
+    ['hub-host-et-nodes', 'hub-join-et-nodes'].forEach((id) => {
+      const input = $(id);
+      if (!input) return;
+      if ((info.nodes || []).length) input.value = info.nodes.join(' ');
+      else if ((info.defaults || []).length) input.placeholder = `${info.defaults.join(' / ')}（留空即用这些）`;
+    });
     etProbe(true);   // 进页面就先探一轮，让玩家一眼看到哪个节点能用
     api.easytierState().then(etShowState).catch(() => {});
   }).catch(() => etSetStatus('<span class="hint-text">读取 EasyTier 状态失败</span>'));
@@ -12597,7 +13953,8 @@ function renderServers(page) {
 
   const etHost = async (withWorld) => {
     if (etBusy) return;
-    const name = ($('et-host-name') && $('et-host-name').value.trim()) || '';
+    const name = ($('et-host-name') && $('et-host-name').value.trim())
+      || ($('hub-host-name') && $('hub-host-name').value.trim()) || '';
     if (!name) return toast('先给房间起个名字', true);
     const instId = lanInstSel.value;
     const world = lanWorldSel.value;
@@ -12608,8 +13965,8 @@ function renderServers(page) {
     etSetStatus('正在拉起 EasyTier（会弹一次管理员授权）…');
     let loading = false;
     try {
-      await api.easytierNodes(etNodes() ? [etNodes()] : []);
-      const pending = api.easytierHost({ room: name });
+      await api.easytierNodes(etNodes('hub-host-et-nodes') ? [etNodes('hub-host-et-nodes')] : []);
+      const pending = api.linkHost({ backend: 'manual', room: name });
       if (withWorld) {
         showLoading(`正在建房并进入世界「${world}」…`);
         loading = true;
@@ -12628,24 +13985,30 @@ function renderServers(page) {
     }
   };
 
-  const etJoin = async () => {
+  const etJoin = async (launch = true, codeArg = '') => {
     if (etBusy) return;
-    const raw = ($('et-join-code') && $('et-join-code').value.trim()) || '';
+    const raw = (codeArg || ($('et-join-code') && $('et-join-code').value.trim())
+      || ($('unified-code') && $('unified-code').value.trim()) || '');
     if (!raw) return toast('请填房主的房间号或房间名', true);
     const instId = lanInstSel.value;
-    if (!instId) return toast('请先选择要用来联机的实例', true);
+    if (launch && !instId) return toast('请先选择要用来联机的实例', true);
 
     etSetBusy(true);
     etSetStatus('正在拉起 EasyTier…');
     let loading = false;
     try {
-      await api.easytierNodes(etNodes() ? [etNodes()] : []);
-      const r = await api.easytierJoin({ room: raw });
+      const nodes = etNodes('hub-join-et-nodes');
+      await api.easytierNodes(nodes ? [nodes] : []);
+      const r = await api.linkJoin({ backend: 'manual', room: raw });
       etSetRoom(etRoomHtml(r.code, r.address));
-      showLoading('正在进入游戏…');
-      loading = true;
-      await api.launch(instId, { quickPlayServer: r.address });
-      toast('已进入游戏。1.20 以下不会自动进服，用「多人游戏 → 直接连接」填 localhost:25565 即可');
+      if (launch) {
+        showLoading('正在进入游戏…');
+        loading = true;
+        await api.launch(instId, { quickPlayServer: r.address });
+        toast('已进入游戏。1.20 以下不会自动进服，用「多人游戏 → 直接连接」填 localhost:25565 即可');
+      } else {
+        toast('已加入网络，游戏里连 ' + r.address);
+      }
     } catch (e) {
       if (e.message !== '已取消') toast('加入失败：' + e.message, true);
     } finally {
@@ -12654,18 +14017,539 @@ function renderServers(page) {
     }
   };
 
+  let pclBusy = false;
+  const pclHost = async () => {
+    if (pclBusy) return;
+    const port = Number(($('hub-host-port') && $('hub-host-port').value) || 25565);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast('端口要填 1-65535', true);
+    const nodeAddr = ($('hub-host-node') && $('hub-host-node').value.trim()) || '';
+    pclBusy = true;
+    etSetBusy(true);
+    etSetStatus('正在选节点、生成邀请码并拉起 EasyTier（会弹一次管理员授权）…');
+    try {
+      const r = await api.linkHost({ backend: 'pcl-legacy', port, nodeAddr });
+      const out = $('pcl-code-out');
+      if (out && out.isConnected) {
+        out.style.display = 'block';
+        out.innerHTML = `邀请码（PCL2 等实现同一约定的启动器可直接粘贴）：<br><span class="lan-ip tc-code">${escapeHtml(r.code)}</span>`
+          + `<button class="btn sm" data-copy-code="${escapeHtml(r.code)}" type="button">复制邀请码</button>`
+          + `<br>房主虚拟地址：<span class="lan-ip">${escapeHtml(r.address)}</span>`
+          + `<br>节点：<span class="lan-ip">${escapeHtml(String(r.node && r.node.address || ''))}</span>`;
+        out.querySelectorAll('[data-copy-code]').forEach((b) => {
+          b.onclick = async () => {
+            try { await navigator.clipboard.writeText(b.dataset.copyCode); toast('已复制邀请码'); } catch { toast('复制失败', true); }
+          };
+        });
+      }
+      etSetRoom(etRoomHtml(r.code, r.address));
+      toast('邀请码已生成，开房成功');
+    } catch (e) {
+      await api.easytierLeave().catch(() => {});
+      if (e.message !== '已取消') toast('开房失败：' + e.message, true);
+    } finally {
+      pclBusy = false;
+      etSetBusy(false);
+    }
+  };
+
+  const pclJoin = async (launch = false, codeArg = '') => {
+    if (pclBusy) return;
+    const code = (codeArg || ($('pcl-join-code') && $('pcl-join-code').value.trim())
+      || ($('unified-code') && $('unified-code').value.trim()) || '');
+    if (!code) return toast('先粘贴邀请码', true);
+    const upper = code.toUpperCase();
+    if (/^U\//.test(upper) || /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(upper)) {
+      return toast('这是陶瓦房号，直接把 U/ 房号粘到上面的加入框即可', true);
+    }
+    if (upper.length === 10) {
+      return toast('这是 PCL CE 的 10 位大厅号，星云暂不支持；请让房主改用陶瓦房号或 PCL 邀请码', true);
+    }
+    const localPort = Number(($('hub-join-port') && $('hub-join-port').value) || 25565);
+    if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) return toast('本机端口要填 1-65535', true);
+    if (launch && !lanInstSel.value) return toast('请先选择要启动的实例', true);
+    const nodeAddr = ($('unified-node') && $('unified-node').value.trim()) || '';
+    pclBusy = true;
+    etSetBusy(true);
+    etSetStatus('正在解析邀请码并加入…');
+    let loading = false;
+    try {
+      const r = await api.linkJoin({ backend: 'pcl-legacy', code, localPort, nodeAddr });
+      etSetRoom(`已加入跨启动器房间<br>游戏里连 <b>127.0.0.1:${escapeHtml(String(r.localPort))}</b>`
+        + `<button class="btn sm" data-et-copy="127.0.0.1:${escapeHtml(String(r.localPort))}" type="button">复制地址</button>`);
+      if (launch) {
+        showLoading('正在进入游戏…');
+        loading = true;
+        try {
+          await api.launch(lanInstSel.value, { quickPlayServer: `127.0.0.1:${r.localPort}` });
+          toast('已加入并启动游戏，进服地址 127.0.0.1:' + r.localPort);
+        } catch (e) {
+          toast('启动游戏失败：' + e.message, true);
+        } finally {
+          loading = false;
+          hideLoading();
+        }
+      } else {
+        toast('已加入，游戏里连 127.0.0.1:' + r.localPort);
+      }
+    } catch (e) {
+      await api.easytierLeave().catch(() => {});
+      if (e.message !== '已取消') toast('加入失败：' + e.message, true);
+    } finally {
+      if (loading) hideLoading();
+      pclBusy = false;
+      etSetBusy(false);
+    }
+  };
+
+  const unifiedJoin = async () => {
+    const raw = ($('unified-code') && $('unified-code').value.trim()) || '';
+    const hint = $('unified-hint');
+    if (!raw) return toast('先粘贴房卡 / 邀请码 / 房号', true);
+    const upper = raw.toUpperCase();
+    const setHint = (text) => { if (hint && hint.isConnected) hint.textContent = text; };
+    const shouldLaunch = !!($('hub-join-launch') && $('hub-join-launch').checked);
+    const joinInst = (hubInstSel && hubInstSel.value) || lanInstSel.value;
+    const joinLaunch = async (addr) => {
+      if (!shouldLaunch) return false;
+      if (!joinInst) { toast('没有可选实例，跳过启动游戏', true); return false; }
+      showLoading('正在启动游戏…');
+      try {
+        await api.launch(joinInst, { quickPlayServer: addr });
+        return true;
+      } catch (e) {
+        toast('启动游戏失败：' + e.message, true);
+        return false;
+      } finally {
+        hideLoading();
+      }
+    };
+
+    // 星云内部直连：私有码，只有星云客户端能解
+    if (upper.startsWith('NEBULA-DIRECT:')) {
+      setHint('已识别为星云内部直连房卡，正在加入…');
+      await hubLeaveAll();
+      hubSetStatus('正在加入星云内部直连（自研直连核心，无需管理员）…');
+      try {
+        const r = await api.nebulaInternalJoin({ code: raw.trim() });
+        nbShowState({ role: 'guest', room: r.room, tcpAddr: r.address, udpAddr: r.udpAddr || r.address, peers: [] });
+        toast('已加入星云内部直连，游戏里连 ' + r.address);
+        if (await joinLaunch(r.address)) toast('已加入并启动游戏');
+      } catch (e) {
+        hubSetStatus(`<span style="color:#ef4444">星云内部直连加入失败：${escapeHtml(e.message)}</span>`);
+        toast('加入失败：' + e.message, true);
+      }
+      return;
+    }
+
+    // 旧版星云直连：NEBULA:房间名@地址（保留兼容旧房卡）
+    const nbPrefix = upper.startsWith('NEBULA:');
+    const nbMatch = raw.match(/^NEBULA:(.*?)@([^\s]+)$/i);
+    if (nbMatch) {
+      let room = ($('unified-room') && $('unified-room').value.trim()) || 'nebula';
+      if (nbPrefix) {
+        try { room = decodeURIComponent(nbMatch[1]) || 'nebula'; } catch { room = nbMatch[1] || 'nebula'; }
+      }
+      const addr = nbMatch[2];
+      setHint('已识别为星云内部直连房卡，正在加入…');
+      await hubLeaveAll();
+      hubSetStatus('正在加入星云内部直连房间，STUN 查询可能要几秒…');
+      try {
+        const r = await api.nebulaJoin({ room, roomAddr: addr, udpPort: 19133, tcpPort: 25566, stun: true });
+        nbShowState({ role: 'guest', room, udpAddr: r.udpAddr, tcpAddr: r.tcpAddr, peers: [] });
+        toast('已加入星云直连，Java 连 ' + r.tcpAddr + '，基岩连 ' + r.udpAddr);
+        if (await joinLaunch(r.tcpAddr)) toast('已加入并启动游戏');
+      } catch (e) {
+        hubSetStatus(`<span style="color:#ef4444">星云直连加入失败：${escapeHtml(e.message)}</span>`);
+        toast('加入失败：' + e.message, true);
+      }
+      return;
+    }
+
+    // 陶瓦 / Scaffolding：U/ 开头，或别的启动器复制出来的 4-4-4-4
+    if (/^U\//.test(upper) || /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(upper)) {
+      const code = /^U\//.test(upper) ? upper : `U/${upper}`;
+      setHint('已识别为陶瓦房号，正在进房…');
+      await hubLeaveAll();
+      return tcJoin(shouldLaunch, code);
+    }
+
+    // PCL 简洁联机 v2：P + 4 位十六进制端口 + 两段随机 + 版本/节点
+    if (/^P[0-9A-F]{4}-/.test(upper) && upper.length >= 23) {
+      setHint('已识别为 PCL 邀请码，正在组网…');
+      await hubLeaveAll();
+      return pclJoin(shouldLaunch, upper);
+    }
+
+    if (upper.length === 10) {
+      setHint('这是 PCL 官方大厅的 10 位大厅号，走的是它自己的私有服务，星云没有对应协议。');
+      return toast('PCL 官方 10 位大厅号接不了；请房主改用 U/ 房号（PCL CE / HMCL / FCL 互通）、P 邀请码或直连地址', true);
+    }
+
+    // 星云 EasyTier 房间号：12 位、可带 4-4-4 横杠
+    if (/^[0-9A-Z]{4}-?[0-9A-Z]{4}-?[0-9A-Z]{4}$/.test(upper)) {
+      setHint('已识别为 EasyTier 房间号，正在组网…');
+      await hubLeaveAll();
+      return etJoin(shouldLaunch, upper);
+    }
+
+    // 通用地址：域名 / IPv4 / [IPv6]，默认 25565；覆盖自建服、Frp、ZeroTier、Tailscale、Radmin 等
+    const directMatch = raw.replace(/：/g, ':').trim().match(/^((?:[a-z0-9-]+\.)+[a-z0-9-]{2,}|localhost|[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9a-f:]+\])(?::([0-9]{1,5}))?$/i);
+    if (directMatch) {
+      const host = directMatch[1];
+      const port = directMatch[2] || '25565';
+      const addr = `${host}:${port}`;
+      setHint('已识别为通用服务器地址，直接进服，不组网。');
+      hubStatusLock = true;
+      hubSetStatus(`正在切换到直连地址 <b>${escapeHtml(addr)}</b>…`, true);
+      try { await hubLeaveAll(); } finally { hubStatusLock = false; }
+      hubSetStatus(`已识别为直连地址 <b>${escapeHtml(addr)}</b>，游戏里直接连这个地址。`, true);
+      hubSetRoom(`<button class="btn btn-ghost" type="button" data-hub-copy="${escapeHtml(addr)}">复制地址</button>`, true);
+      if (await joinLaunch(addr)) toast('已启动游戏并连接 ' + addr);
+      else toast('地址已就绪：' + addr + '，可直接在游戏里添加服务器');
+      return;
+    }
+
+    setHint('没认出来。支持星云房卡、P 开头 PCL 邀请码、U/ 陶瓦房号、12 位 EasyTier 房间号、IP:端口或域名。');
+    toast('房号格式没认出来', true);
+  };
+
+  let hubBusy = false;
+  const hubHost = async () => {
+    if (hubBusy) return;
+    const method = ($('hub-method') && $('hub-method').value) || 'pcl';
+    const name = ($('hub-host-name') && $('hub-host-name').value.trim()) || 'nebula';
+    const edition = ($('hub-host-edition') && $('hub-host-edition').value) || 'java';
+    const port = Number(($('hub-host-port') && $('hub-host-port').value.trim()) || (edition === 'bedrock' ? 19132 : 25565));
+    const nodeAddr = ($('hub-host-node') && $('hub-host-node').value.trim()) || '';
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast('端口要填 1-65535', true);
+    if ((method === 'tc' || method === 'easy') && !name) return toast('先给房间起个名字', true);
+
+    const shouldLaunch = !!($('hub-host-launch') && $('hub-host-launch').checked);
+    const instId = (hubHostInstSel && hubHostInstSel.value) || lanInstSel.value;
+    const world = (hubHostWorldSel && hubHostWorldSel.value) || lanWorldSel.value;
+    let loading = false;
+    const launchGame = async (text) => {
+      if (!shouldLaunch) return false;
+      if (!instId) { toast('没有可选实例，跳过启动游戏', true); return false; }
+      showLoading(text || '正在启动游戏…');
+      loading = true;
+      try {
+        await api.launch(instId, world ? { quickPlayWorld: world } : {});
+        return true;
+      } catch (e) {
+        toast('启动游戏失败：' + e.message, true);
+        return false;
+      } finally {
+        loading = false;
+        hideLoading();
+      }
+    };
+
+    hubBusy = true;
+    const btn = $('hub-host');
+    if (btn) btn.disabled = true;
+    try {
+      await hubLeaveAll();
+
+      if (method === 'nebula') {
+        hubSetStatus('正在开星云内部直连房间（私有码 + 自研直连核心）…');
+        const r = await api.nebulaInternalHost({ room: name, gamePort: port });
+        const card = r.code;
+        state.nbHostCard = card;
+        hubSetStatus(`星云内部直连已开房 · 房间 <b>${escapeHtml(name)}</b>，等星云启动器加入`);
+        hubSetRoom(`星云内部房卡（私有码，只有星云启动器能解）：<br><span class="lan-ip tc-code">${escapeHtml(card)}</span>`
+          + `<button class="btn sm" data-hub-copy="${escapeHtml(card)}" type="button">复制房卡</button>`
+          + `<br>房主虚拟地址：<span class="lan-ip">${escapeHtml(r.address)}</span>`
+          + `<br><span class="hint-text">朋友用星云启动器在「联机中心 → 加入房间」粘贴这张房卡；其他启动器无法加入。</span>`);
+        toast('星云内部直连房卡已生成');
+        if (await launchGame('正在启动游戏，进世界后按 Esc →「对局域网开放」…')) {
+          hubSetStatus(`星云内部直连已开房 · 房间 <b>${escapeHtml(name)}</b>；游戏已启动，进世界后按 Esc 开放局域网`);
+        }
+        return;
+      }
+
+      if (method === 'pcl') {
+        hubSetStatus('正在选节点、生成 PCL 邀请码并拉起 EasyTier（会弹一次管理员授权）…');
+        const r = await api.linkHost({ backend: 'pcl-legacy', port, nodeAddr });
+        hubSetStatus('PCL 邀请码已生成');
+        hubSetRoom(`PCL 邀请码（PCL2 等实现同一约定的启动器可粘贴）：<br><span class="lan-ip tc-code">${escapeHtml(r.code)}</span>`
+          + `<button class="btn sm" data-hub-copy="${escapeHtml(r.code)}" type="button">复制邀请码</button>`
+          + `<br>房主虚拟地址：<span class="lan-ip">${escapeHtml(r.address)}</span>`
+          + `<br>节点：<span class="lan-ip">${escapeHtml(String(r.node && r.node.address || ''))}</span>`);
+        toast('PCL 邀请码已生成');
+        if (await launchGame('正在启动游戏，进世界后按 Esc →「对局域网开放」…')) {
+          hubSetStatus('PCL 邀请码已生成；游戏已启动');
+        }
+        return;
+      }
+
+      if (method === 'tc') {
+        hubSetStatus('正在拉起陶瓦联机…');
+        const pending = api.scaffoldHost({ name, player: ($('hub-host-player') && $('hub-host-player').value.trim()) || '' });
+        if (shouldLaunch) {
+          await launchGame('正在启动游戏，进世界后按 Esc →「对局域网开放」…');
+          hubSetStatus('游戏已启动，正在等你按 Esc →「对局域网开放」…');
+        } else {
+          hubSetStatus('正在建房。进游戏后按 Esc →「对局域网开放」，房间号会自动出现…');
+        }
+        const r = await pending;
+        tcSetRoom(tcRoomHtml(r.code));
+        hubSetStatus('陶瓦房间已建好。进游戏后按 Esc →「对局域网开放」…');
+        toast(`陶瓦房间开好了：${r.code}`);
+        return;
+      }
+
+      if (method === 'easy') {
+        hubSetStatus('正在拉起 EasyTier（会弹一次管理员授权）…');
+        const etNode = etNodes('hub-host-et-nodes');
+        await api.easytierNodes(etNode ? [etNode] : []);
+        const r = await api.linkHost({ backend: 'manual', room: name });
+        etSetStatus('EasyTier 房间已建好，等朋友进网');
+        etSetRoom(etRoomHtml(r.code, r.address));
+        toast(`EasyTier 房间开好了：${r.code}`);
+        if (await launchGame('正在启动游戏，进世界后按 Esc →「对局域网开放」…')) {
+          etSetStatus('EasyTier 房间已建好；游戏已启动，进世界后按 Esc 开放局域网');
+        }
+      }
+    } catch (e) {
+      await hubLeaveAll();
+      if (e.message === '已取消') {
+        hubSetStatus('已取消');
+        return;
+      }
+      hubSetStatus(`<span style="color:#ef4444">创建房间失败：${escapeHtml(e.message)}</span>`);
+      toast('创建房间失败：' + e.message, true);
+    } finally {
+      if (loading) hideLoading();
+      hubBusy = false;
+      if (btn && btn.isConnected) btn.disabled = false;
+    }
+  };
+
+
+  let manualBusy = false;
+  const manualHostParams = () => ({
+    name: ($('manual-host-name') && $('manual-host-name').value.trim()) || '',
+    secret: ($('manual-host-secret') && $('manual-host-secret').value.trim()) || '',
+    nodes: ($('manual-host-peer') && $('manual-host-peer').value.trim()) || '',
+  });
+  const manualJoinParams = () => ({
+    name: ($('manual-name') && $('manual-name').value.trim()) || '',
+    secret: ($('manual-secret') && $('manual-secret').value.trim()) || '',
+    nodes: ($('manual-peer') && $('manual-peer').value.trim()) || '',
+  });
+
+  const manualHost = async () => {
+    if (manualBusy) return;
+    const p = manualHostParams();
+    if (!p.name || !p.secret) return toast('网络名称和网络密钥都要填', true);
+    const port = Number(($('manual-host-port') && $('manual-host-port').value) || 25565);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast('房主 MC 端口要填 1-65535', true);
+    manualBusy = true;
+    etSetBusy(true);
+    etSetStatus('正在按手动参数建房…');
+    try {
+      const r = await api.linkHost({
+        backend: 'manual',
+        networkName: p.name,
+        networkSecret: p.secret,
+        nodes: p.nodes,
+        gamePort: port,
+      });
+      etSetRoom(`手动参数房间已建好<br>房主地址：<span class="lan-ip">${escapeHtml(r.address)}</span>`
+        + `<button class="btn sm" data-et-copy="${escapeHtml(r.address)}" type="button">复制地址</button>`);
+      toast('已按手动参数建房');
+    } catch (e) {
+      await api.easytierLeave().catch(() => {});
+      if (e.message !== '已取消') toast('手动建房失败：' + e.message, true);
+    } finally {
+      manualBusy = false;
+      etSetBusy(false);
+    }
+  };
+
+  const manualJoin = async () => {
+    if (manualBusy) return;
+    const p = manualJoinParams();
+    if (!p.name || !p.secret) return toast('网络名称和网络密钥都要填', true);
+    const remotePort = Number(($('manual-port') && $('manual-port').value) || 25565);
+    const localPort = Number(($('manual-local-port') && $('manual-local-port').value) || 25565);
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) return toast('房主 MC 端口要填 1-65535', true);
+    if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) return toast('本机端口要填 1-65535', true);
+    manualBusy = true;
+    etSetBusy(true);
+    etSetStatus('正在按手动参数加入…');
+    try {
+      const r = await api.linkJoin({
+        backend: 'manual',
+        networkName: p.name,
+        networkSecret: p.secret,
+        nodes: p.nodes,
+        gamePort: remotePort,
+        localPort,
+      });
+      etSetRoom(`已按手动参数加入<br>游戏里连 <b>${escapeHtml(r.address)}</b>`
+        + `<button class="btn sm" data-et-copy="${escapeHtml(r.address)}" type="button">复制地址</button>`);
+      toast('已加入，游戏里连 ' + r.address);
+    } catch (e) {
+      await api.easytierLeave().catch(() => {});
+      if (e.message !== '已取消') toast('手动加入失败：' + e.message, true);
+    } finally {
+      manualBusy = false;
+      etSetBusy(false);
+    }
+  };
+
+
+  const unifiedBtn = $('unified-join');
+  if (unifiedBtn) unifiedBtn.onclick = unifiedJoin;
+  const hubHostBtn = $('hub-host');
+  if (hubHostBtn) hubHostBtn.onclick = hubHost;
+  const hubLeaveBtn = $('hub-leave');
+  if (hubLeaveBtn) hubLeaveBtn.onclick = async () => {
+    await hubLeaveAll();
+    hubSetRoom('');
+    hubSetStatus('已退出联机');
+    toast('已退出所有联机');
+  };
+  const manualHostBtn = $('manual-host');
+  if (manualHostBtn) manualHostBtn.onclick = manualHost;
+  const manualJoinBtn = $('manual-join');
+  if (manualJoinBtn) manualJoinBtn.onclick = manualJoin;
+
   const etHostBtn = $('et-host');
   if (etHostBtn) etHostBtn.onclick = () => etHost(true);
   const etHostOnlyBtn = $('et-host-only');
   if (etHostOnlyBtn) etHostOnlyBtn.onclick = () => etHost(false);
   const etJoinBtn = $('et-join');
-  if (etJoinBtn) etJoinBtn.onclick = etJoin;
+  if (etJoinBtn) etJoinBtn.onclick = () => etJoin();
+  const pclHostBtn = $('pcl-host');
+  if (pclHostBtn) pclHostBtn.onclick = pclHost;
+  const pclJoinBtn = $('pcl-join');
+  if (pclJoinBtn) pclJoinBtn.onclick = () => pclJoin();
   const etLeaveBtn = $('et-leave');
   if (etLeaveBtn) etLeaveBtn.onclick = async () => {
     await api.easytierLeave();
     etSetRoom('');
     etSetStatus('已退出房间');
     toast('已退出 EasyTier 房间');
+  };
+
+  /* ---------- 联机大厅：星云直连（自研 Go 核心） ---------- */
+  let nbBusy = false;
+  const nbSetStatus = (html) => {
+    const el = $('nb-status');
+    if (el && el.isConnected) el.innerHTML = html;
+    hubSetStatus(html);
+  };
+  const nbSetRoom = (html) => {
+    hubSetRoom(html);
+    const el = $('nb-room');
+    if (el && el.isConnected) el.innerHTML = html;
+  };
+  const nbShowState = (s) => {
+    if (!s) return;
+    if (s.error) {
+      nbSetStatus(`<span style="color:#ef4444">${escapeHtml(s.error)}</span>`);
+      return;
+    }
+    if (s.role === 'host') {
+      nbSetStatus(`房主 · 房间 <b>${escapeHtml(s.room || '')}</b> · 成员 ${(s.peers || []).length} 人`);
+      if (s.code) {
+        const card = state.nbHostCard || `NEBULA:${encodeURIComponent(s.room || 'nebula')}@${s.code}`;
+        nbSetRoom(`星云房卡（只支持星云启动器）：<br><span class="lan-ip tc-code">${escapeHtml(card)}</span>`
+          + `<button class="btn sm" data-nb-copy="${escapeHtml(card)}" type="button">复制房卡</button>`
+          + `<br>原始地址：<span class="lan-ip">${escapeHtml(s.code)}</span>`);
+      }
+    } else if (s.role === 'guest') {
+      nbSetStatus(`已加入 · 房间 <b>${escapeHtml(s.room || '')}</b> · 成员 ${(s.peers || []).length} 人`);
+      nbSetRoom(`Java 连 <b>${escapeHtml(s.tcpAddr || '127.0.0.1:25566')}</b><br>基岩连 <b>${escapeHtml(s.udpAddr || '127.0.0.1:19133')}</b>`);
+    } else {
+      nbSetStatus('空闲。开房或加入后，状态会显示在这里。');
+    }
+    const box = $('nb-room');
+    if (box) {
+      box.querySelectorAll('[data-nb-copy]').forEach((b) => {
+        b.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(b.dataset.nbCopy);
+            toast('房卡已复制，发给朋友');
+          } catch { toast('复制失败', true); }
+        };
+      });
+    }
+  };
+  state.nbHook = nbShowState;
+  const nbSetBusy = (v) => {
+    nbBusy = v;
+    ['nb-host', 'nb-join'].forEach((id) => {
+      const b = $(id);
+      if (b && b.isConnected) b.disabled = v;
+    });
+  };
+  api.nebulaInfo().then((info) => {
+    const badge = $('nb-badge');
+    if (badge) {
+      badge.textContent = info && info.available ? '自研核心' : '后台缺失';
+      if (!info || !info.available) badge.classList.add('bad');
+    }
+    if (!info || !info.available) nbSetStatus('缺少 nebula-direct.exe，请确认 resources/netcore 已随包安装。');
+  }).catch(() => {});
+  api.nebulaState().then(nbShowState).catch(() => {});
+  const nbEditionSel = $('nb-host-edition');
+  if (nbEditionSel) nbEditionSel.onchange = () => {
+    const port = $('nb-host-port');
+    if (port) port.value = nbEditionSel.value === 'bedrock' ? '19132' : '25565';
+  };
+  const nbHostBtn = $('nb-host');
+  if (nbHostBtn) nbHostBtn.onclick = async () => {
+    if (nbBusy) return;
+    const room = ($('nb-host-room') && $('nb-host-room').value.trim()) || 'nebula';
+    const edition = ($('nb-host-edition') && $('nb-host-edition').value) || 'java';
+    const port = Number(($('nb-host-port') && $('nb-host-port').value.trim()) || (edition === 'bedrock' ? 19132 : 25565));
+    if (!port) return toast('先填游戏端口', true);
+    nbSetBusy(true);
+    nbSetStatus('正在开房，STUN 查询可能要几秒…');
+    try {
+      const r = await api.nebulaHost({
+        room, edition,
+        gameAddr: `127.0.0.1:${port}`,
+        tcpGameAddr: `127.0.0.1:${port}`,
+        stun: true,
+      });
+      nbShowState({
+        role: 'host', room, code: r.code,
+        peers: [],
+      });
+      toast(`房卡已生成：${r.code}`);
+    } catch (e) {
+      nbSetStatus(`开房失败：${escapeHtml(e.message)}`);
+      toast('开房失败：' + e.message, true);
+    } finally { nbSetBusy(false); }
+  };
+  const nbJoinBtn = $('nb-join');
+  if (nbJoinBtn) nbJoinBtn.onclick = async () => {
+    if (nbBusy) return;
+    const code = ($('nb-join-code') && $('nb-join-code').value.trim()) || '';
+    if (!code) return toast('先粘贴房主的房卡', true);
+    const room = ($('nb-join-room') && $('nb-join-room').value.trim()) || 'nebula';
+    nbSetBusy(true);
+    nbSetStatus('正在加入房间…');
+    try {
+      const r = await api.nebulaJoin({ room, roomAddr: code, udpPort: 19133, tcpPort: 25566, stun: true });
+      nbShowState({ role: 'guest', room, udpAddr: r.udpAddr, tcpAddr: r.tcpAddr, peers: [] });
+      toast('已加入，Java 连 ' + r.tcpAddr + '，基岩连 ' + r.udpAddr);
+    } catch (e) {
+      nbSetStatus(`加入失败：${escapeHtml(e.message)}`);
+      toast('加入失败：' + e.message, true);
+    } finally { nbSetBusy(false); }
+  };
+  const nbLeaveBtn = $('nb-leave');
+  if (nbLeaveBtn) nbLeaveBtn.onclick = async () => {
+    await api.nebulaLeave().catch(() => {});
+    nbSetRoom('');
+    nbSetStatus('已退出房间');
+    toast('已退出星云直连房间');
   };
 
   /* ---------- 联机大厅：一键开服（独立服务端） ---------- */
@@ -12747,7 +14631,7 @@ function renderServers(page) {
           <button class="tab active" data-msrv-c-tab="console" type="button">控制台</button>
           <button class="tab" data-msrv-c-tab="logs" type="button">日志</button>
           <button class="tab" data-msrv-c-tab="mods" type="button">模组</button>
-          <button class="tab" data-msrv-c-tab="players" type="button">玩家 / OP</button>
+          <button class="tab" data-msrv-c-tab="players" type="button">成员管理</button>
           <button class="tab" data-msrv-c-tab="settings" type="button">设置</button>
         </div>
         <div id="msrv-c-body" class="msrv-console-body"></div>
@@ -12905,16 +14789,6 @@ function renderServers(page) {
       if (alive && tab === 'console' && termEl && termEl.isConnected) setTerm(logCache, false);
     }
 
-    async function makeOp(name) {
-      const me = String(name || '').trim();
-      if (!me) return toast('请输入玩家名', true);
-      try {
-        await api.msrvOpsAdd(server.id, me);
-        if (isRunning()) await api.msrvInput(server.id, `op ${me}`).catch(() => null);
-        toast(`已把「${me}」设为 OP；进游戏后输入 /op ${me} 或直接使用管理员命令`, false, { ico: '🛡️', hold: 4200 });
-      } catch (e) { toast('设置 OP 失败：' + e.message, true); }
-    }
-
     async function drawLogs() {
       if (!alive || tab !== 'logs') return;
       body.innerHTML = `
@@ -13023,75 +14897,119 @@ function renderServers(page) {
       body.innerHTML = `
         <div class="msrv-op-hero">
           <div>
-            <div style="font-weight:700;font-size:15px">把自己设成管理员（OP）</div>
-            <div class="hint-text" style="margin-top:4px">离线服务器：写进 ops.json；正版服务器：执行 op 命令。OP 后进游戏就能用 /gamemode、/tp、/give 等管理员命令。</div>
+            <div style="font-weight:700;font-size:15px">成员管理</div>
+            <div class="hint-text" style="margin-top:4px">统一管理这个服的玩家：给 / 撤 OP、切生存或创造、踢人、白名单、黑名单。服务器在线时命令立即生效，离线时改配置文件、下次启动生效。</div>
           </div>
           <button class="btn primary" id="msrv-op-self" type="button">一键给自己 OP</button>
         </div>
-        <div class="row" style="gap:8px;margin:12px 0">
-          <input class="input" id="msrv-player-name" placeholder="玩家名（1-16 位字母/数字/下划线）" style="flex:1" value="${escapeHtml(me)}">
-          <button class="btn primary" id="msrv-player-op" type="button">设为 OP</button>
-          <button class="btn" id="msrv-player-white" type="button">加白名单</button>
+        <div class="row" style="gap:8px;margin:12px 0;flex-wrap:wrap">
+          <input class="input" id="msrv-member-name" placeholder="玩家名（1-16 位字母/数字/下划线）" style="flex:1;min-width:180px" value="${escapeHtml(me)}">
+          <button class="btn primary" id="msrv-member-op" type="button">给 OP</button>
+          <button class="btn" id="msrv-member-white" type="button">加白名单</button>
+          <button class="btn danger" id="msrv-member-ban" type="button">拉黑</button>
+          <button class="btn" id="msrv-member-wl-toggle" type="button">白名单开关</button>
+          <button class="btn" id="msrv-member-refresh" type="button">刷新</button>
         </div>
-        <div class="row" style="align-items:flex-start;gap:16px;margin-top:12px">
-          <div style="flex:1;min-width:0">
-            <div class="section-title" style="font-size:14px">管理员 OP</div>
-            <div id="msrv-op-list"><div class="hint-text">读取中…</div></div>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div class="section-title" style="font-size:14px">白名单</div>
-            <div id="msrv-white-list"><div class="hint-text">读取中…</div></div>
-          </div>
-        </div>`;
-      const nameEl = body.querySelector('#msrv-player-name');
-      const opList = body.querySelector('#msrv-op-list');
-      const whiteList = body.querySelector('#msrv-white-list');
+        <div class="hint-text" id="msrv-member-meta" style="margin-bottom:6px">读取中…</div>
+        <div id="msrv-member-list"><div class="hint-text">读取中…</div></div>`;
+      const nameEl = body.querySelector('#msrv-member-name');
+      const listBox = body.querySelector('#msrv-member-list');
+      const metaEl = body.querySelector('#msrv-member-meta');
 
-      const drawLists = async () => {
+      const act = async (action, name, value) => {
+        const labels = {
+          op: '已设为 OP', deop: '已撤销 OP',
+          'whitelist-add': '已加入白名单', 'whitelist-remove': '已移出白名单',
+          'whitelist-on': '已开启白名单', 'whitelist-off': '已关闭白名单',
+          ban: '已加入黑名单', unban: '已解除封禁',
+          kick: '已踢出', gamemode: '已切换游戏模式',
+        };
         try {
-          const [ops, whites] = await Promise.all([
-            api.msrvOpsList(server.id).catch(() => []),
-            api.msrvWhitelistList(server.id).catch(() => []),
-          ]);
-          opList.innerHTML = ops.length ? ops.map((p) => `
-            <div class="msrv-player-row">
-              <div><b>${escapeHtml(p.name || '')}</b><div class="hint-text">权限等级 ${p.level != null ? p.level : 4} · OP</div></div>
-              <button class="btn sm danger" data-op-del="${escapeHtml(p.name || '')}" type="button">撤销</button>
-            </div>`).join('') : '<div class="empty-tip">还没有 OP</div>';
-          whiteList.innerHTML = whites.length ? whites.map((p) => `
-            <div class="msrv-player-row">
-              <div><b>${escapeHtml(p.name || '')}</b></div>
-              <button class="btn sm danger" data-white-del="${escapeHtml(p.name || '')}" type="button">移除</button>
-            </div>`).join('') : '<div class="empty-tip">白名单为空（未开启白名单时谁都能进）</div>';
-          opList.querySelectorAll('[data-op-del]').forEach((b) => {
+          await api.msrvMemberAction(server.id, action, name, value);
+          toast(`${labels[action] || '已操作'}：${name}`);
+          await render();
+        } catch (e) { toast(e.message, true); }
+      };
+
+      const render = async () => {
+        try {
+          const r = await api.msrvMembersList(server.id);
+          const players = r.players || [];
+          const wlBtn = body.querySelector('#msrv-member-wl-toggle');
+          if (wlBtn) wlBtn.textContent = r.whitelistEnabled ? '关闭白名单' : '开启白名单';
+          metaEl.textContent = r.running
+            ? `运行中 · 在线 ${r.onlineCount}${r.maxPlayers ? ` / ${r.maxPlayers}` : ''} 人 · 共 ${players.length} 名成员 · 白名单${r.whitelistEnabled ? '已开启' : '未开启'}${r.pinged ? '' : '（在线状态查询失败）'}`
+            : `未运行 · 共 ${players.length} 名成员 · 白名单${r.whitelistEnabled ? '已开启' : '未开启'}（在线状态不可用）`;
+          if (!players.length) {
+            listBox.innerHTML = '<div class="empty-tip">还没有成员。玩家进过一次服，或加进白名单 / OP 后就会出现在这里。</div>';
+            return;
+          }
+          listBox.innerHTML = players.map((p) => {
+            const badges = [
+              p.online ? '<span class="badge" style="background:rgba(34,197,94,.16);color:#22c55e">在线</span>' : '',
+              p.op ? '<span class="badge">OP</span>' : '',
+              p.whitelist ? '<span class="badge" style="background:rgba(59,130,246,.16);color:#3b82f6">白名单</span>' : '',
+              p.banned ? '<span class="badge" style="background:rgba(239,68,68,.16);color:#ef4444">黑名单</span>' : '',
+            ].filter(Boolean).join(' ');
+            return `<div class="msrv-player-row">
+              <div style="min-width:150px">
+                <b>${escapeHtml(p.name)}</b>
+                <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${badges || '<span class="hint-text">普通成员</span>'}</div>
+                ${p.banned && p.reason ? `<div class="hint-text">原因：${escapeHtml(p.reason)}</div>` : ''}
+              </div>
+              <div class="row" style="gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                <button class="btn sm" data-mact="${p.op ? 'deop' : 'op'}" data-name="${escapeHtml(p.name)}" type="button">${p.op ? '撤销 OP' : '给 OP'}</button>
+                <button class="btn sm" data-mact="${p.whitelist ? 'whitelist-remove' : 'whitelist-add'}" data-name="${escapeHtml(p.name)}" type="button">${p.whitelist ? '移出白名单' : '加白名单'}</button>
+                ${p.online ? `<button class="btn sm" data-mact="gamemode" data-mode="survival" data-name="${escapeHtml(p.name)}" type="button">生存</button>
+                <button class="btn sm" data-mact="gamemode" data-mode="creative" data-name="${escapeHtml(p.name)}" type="button">创造</button>
+                <button class="btn sm danger" data-mact="kick" data-name="${escapeHtml(p.name)}" type="button">踢出</button>` : ''}
+                <button class="btn sm ${p.banned ? '' : 'danger'}" data-mact="${p.banned ? 'unban' : 'ban'}" data-name="${escapeHtml(p.name)}" type="button">${p.banned ? '解封' : '拉黑'}</button>
+              </div>
+            </div>`;
+          }).join('');
+          listBox.querySelectorAll('[data-mact]').forEach((b) => {
             b.onclick = async () => {
-              try { await api.msrvOpsRemove(server.id, b.dataset.opDel); if (isRunning()) await api.msrvInput(server.id, `deop ${b.dataset.opDel}`).catch(() => null); toast('已撤销'); drawLists(); }
-              catch (e) { toast(e.message, true); }
-            };
-          });
-          whiteList.querySelectorAll('[data-white-del]').forEach((b) => {
-            b.onclick = async () => {
-              try { await api.msrvWhitelistRemove(server.id, b.dataset.whiteDel); if (isRunning()) await api.msrvInput(server.id, `whitelist remove ${b.dataset.whiteDel}`).catch(() => null); toast('已移除'); drawLists(); }
-              catch (e) { toast(e.message, true); }
+              const action = b.dataset.mact;
+              const name = b.dataset.name;
+              if (action === 'ban' || action === 'kick') {
+                const ok = await askChoice(
+                  action === 'ban' ? `把「${escapeHtml(name)}」加入黑名单？` : `把「${escapeHtml(name)}」踢出服务器？`,
+                  [{ value: 'yes', label: action === 'ban' ? '确认拉黑' : '确认踢出', desc: action === 'ban' ? '下次也进不来，直到解封' : '玩家会断线，可以重新进' }]);
+                if (!ok) return;
+              }
+              await act(action, name, b.dataset.mode);
             };
           });
         } catch (e) {
-          opList.innerHTML = `<div class="hint-text">读取失败：${escapeHtml(e.message)}</div>`;
+          listBox.innerHTML = `<div class="hint-text">读取失败：${escapeHtml(e.message)}</div>`;
         }
       };
-      body.querySelector('#msrv-op-self').onclick = async () => { await makeOp(nameEl.value.trim()); drawLists(); };
-      body.querySelector('#msrv-player-op').onclick = async () => { await makeOp(nameEl.value.trim()); drawLists(); };
-      body.querySelector('#msrv-player-white').onclick = async () => {
+
+      const quick = async (action) => {
         const n = nameEl.value.trim();
-        if (!n) return toast('请输入玩家名', true);
-        try {
-          await api.msrvWhitelistAdd(server.id, n);
-          if (isRunning()) await api.msrvInput(server.id, `whitelist add ${n}`).catch(() => null);
-          toast(`已把「${n}」加入白名单`);
-          drawLists();
-        } catch (e) { toast(e.message, true); }
+        if (!n) return toast('先填玩家名', true);
+        if (action === 'ban') {
+          const ok = await askChoice(`把「${escapeHtml(n)}」加入黑名单？`, [
+            { value: 'yes', label: '确认拉黑', desc: '下次也进不来，直到解封' },
+          ]);
+          if (!ok) return;
+        }
+        await act(action, n);
       };
-      await drawLists();
+      body.querySelector('#msrv-op-self').onclick = async () => {
+        if (!me) return toast('先在账号页登录，或手动填玩家名', true);
+        await act('op', me);
+      };
+      body.querySelector('#msrv-member-op').onclick = () => quick('op');
+      body.querySelector('#msrv-member-white').onclick = () => quick('whitelist-add');
+      body.querySelector('#msrv-member-ban').onclick = () => quick('ban');
+      body.querySelector('#msrv-member-refresh').onclick = () => render();
+      body.querySelector('#msrv-member-wl-toggle').onclick = async () => {
+        const btn = body.querySelector('#msrv-member-wl-toggle');
+        const turningOff = btn.textContent.includes('关闭');
+        await act(turningOff ? 'whitelist-off' : 'whitelist-on', me || 'server');
+      };
+      await render();
     }
 
     async function drawSettings() {
@@ -17276,12 +19194,12 @@ function renderTranslateTool(box) {
 
 /* ========== 启动器自更新 ========== */
 
-// 官方更新清单地址（GitHub latest 路由，永远指向最新版）。
-// 用户未自定义时所有入口都回退到此地址。
-const DEFAULT_UPDATE_URL = 'https://api.github.com/repos/BlockVibe001/cm-launcher/releases/latest';
-const DEFAULT_UPDATE_URL_BETA = 'https://api.github.com/repos/BlockVibe001/cm-launcher/releases?per_page=100';
-// 安卓专用更新：单独一条通道，版本号带 -android.N，不跟 Windows 版号互相比较
-const DEFAULT_UPDATE_URL_ANDROID = 'https://api.github.com/repos/BlockVibe001/cm-launcher/releases?per_page=100';
+// 同一个仓库、三个独立目录：正式版 / 测试版 / 手机版（走仓库自己的 Pages 域名）
+const UPDATE_REPO_RAW = 'https://blockvibe001.github.io/cm-launcher/updates';
+const DEFAULT_UPDATE_URL = `${UPDATE_REPO_RAW}/stable/update.json`;
+const DEFAULT_UPDATE_URL_BETA = `${UPDATE_REPO_RAW}/beta/update.json`;
+// 手机版独立更新：版本号带 -android.N，不跟 Windows 版号互相比较
+const DEFAULT_UPDATE_URL_ANDROID = `${UPDATE_REPO_RAW}/mobile/update.json`;
 
 // 检查到的新版清单；null = 无新版 / 还没查过。顶栏红点与首页徽章都读它。
 let pendingUpdate = null;
@@ -17301,7 +19219,7 @@ function changelogChannel(x) {
 
 function updateChannelLabel(channel) {
   const ch = normalizeUpdateChannel(channel);
-  return ch === 'beta' ? '测试版' : ch === 'android' ? '安卓专用版' : '正式版';
+  return ch === 'beta' ? '测试版' : ch === 'android' ? '手机版' : '正式版';
 }
 
 /**
@@ -17416,7 +19334,7 @@ async function checkUpdate(silent = false) {
       api.configUpdate({ update: { ...up, lastCheckAt: Date.now() } });
     }
     if (!silent) toast(res.platform === 'android'
-      ? `安卓专用版本 v${res.latest}，可在下载页获取`
+      ? `手机版版本 v${res.latest}，可在下载页获取`
       : (res.hasUpdate ? `发现新版本 v${res.latest}（${updateChannelLabel(channel)}）` : '已是最新版'));
     return res;
   } catch (e) {
@@ -17537,6 +19455,159 @@ async function renderPlugins() {
       btns.appendChild(b);
     });
     if (btns.children.length) card.appendChild(btns);
+    host.appendChild(card);
+  });
+}
+
+/* ========== MCP 工具服务器 ========== */
+
+const MCP_STATUS_LABEL = {
+  online: '在线',
+  connecting: '连接中',
+  error: '连接失败',
+  stopped: '未运行',
+};
+
+function parseMcpArgs(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (raw.startsWith('[')) {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) throw new Error('参数 JSON 必须是数组');
+    return arr.map(String);
+  }
+  return raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+function parseMcpHeaders(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return {};
+  let obj;
+  try { obj = JSON.parse(raw); } catch { throw new Error('不是合法 JSON'); }
+  if (!obj || Array.isArray(obj) || typeof obj !== 'object') throw new Error('必须是 JSON 对象');
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!k.trim()) continue;
+    if (typeof v !== 'string' && typeof v !== 'number') throw new Error(`请求头 ${k} 的值必须是字符串`);
+    out[k.trim()] = String(v);
+  }
+  return out;
+}
+
+async function renderMcp() {
+  const host = $('mcp-list');
+  if (!host) return;
+  let list = [];
+  try {
+    list = await api.mcpList();
+  } catch (e) {
+    host.innerHTML = `<div class="hint-text">读取 MCP 配置失败：${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!Array.isArray(list) || !list.length) {
+    host.innerHTML = '<div class="hint-text">还没有 MCP server。可以先点「安装示例服务器」验证链路，或填一个你信任的 stdio server 命令。</div>';
+    return;
+  }
+  host.innerHTML = '';
+  list.forEach((s) => {
+    const card = ce('div');
+    card.style.cssText = 'padding:14px;border-radius:12px;background:rgba(255,255,255,.04);margin-bottom:10px';
+
+    const head = ce('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+    const name = ce('div', null, `<b>${escapeHtml(s.name || s.id)}</b> <span class="hint-text">${escapeHtml(s.id)}</span>`);
+    name.style.cssText = 'font-size:14px';
+    head.appendChild(name);
+    const st = MCP_STATUS_LABEL[s.status] || s.status;
+    const badge = ce('span', 'hint-text');
+    badge.textContent = `● ${st}${s.toolCount ? ` · ${s.toolCount} 个工具` : ''}`;
+    badge.style.color = s.status === 'online' ? '#3fb950' : (s.status === 'error' ? '#ff8a80' : 'var(--text-dim)');
+    head.appendChild(badge);
+    if (s.verified) head.appendChild(ce('span', 'hint-text', '已验证'));
+
+    const isHttp = !!(s.transport && s.transport.type === 'http');
+    const transportLabel = isHttp
+      ? (s.transport.protocol === 'sse' ? 'HTTP · 旧版 SSE' : 'HTTP · Streamable')
+      : '本地命令';
+    head.appendChild(ce('span', 'hint-text', transportLabel));
+
+    const sw = ce('input');
+    sw.type = 'checkbox';
+    sw.checked = !!s.enabled;
+    sw.title = s.enabled ? '停用并断开连接' : '启用并连接';
+    sw.style.marginLeft = 'auto';
+    sw.onchange = async () => {
+      sw.disabled = true;
+      try {
+        const r = await api.mcpToggle(s.id, sw.checked);
+        if (!r || !r.ok) throw new Error((r && r.error) || '操作失败');
+        await renderMcp();
+      } catch (e) {
+        sw.checked = !sw.checked;
+        sw.disabled = false;
+        toast('MCP 操作失败：' + e.message, true);
+      }
+    };
+    head.appendChild(sw);
+    card.appendChild(head);
+
+    if (s.desc) {
+      const d = ce('div', 'hint-text', escapeHtml(s.desc));
+      d.style.marginTop = '6px';
+      card.appendChild(d);
+    }
+    if (s.preview) {
+      const cmd = ce('div', 'hint-text');
+      cmd.style.cssText = 'margin-top:6px;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;word-break:break-all';
+      cmd.textContent = `${isHttp ? '连接地址' : '启动命令'}：${s.preview}`;
+      card.appendChild(cmd);
+    }
+    if (s.error) {
+      const er = ce('div', 'hint-text', '原因：' + escapeHtml(s.error));
+      er.style.cssText = 'margin-top:6px;color:#ff8a80';
+      card.appendChild(er);
+    }
+
+    const btns = ce('div');
+    btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px';
+    const rb = ce('button', 'btn sm', '重新连接');
+    rb.type = 'button';
+    rb.onclick = async () => {
+      rb.disabled = true;
+      try {
+        const r = await api.mcpRestart(s.id);
+        if (!r || !r.ok) throw new Error((r && r.error) || '连接失败');
+        toast('MCP 已重新连接');
+      } catch (e) {
+        toast('连接失败：' + e.message, true);
+      } finally {
+        rb.disabled = false;
+        await renderMcp();
+      }
+    };
+    btns.appendChild(rb);
+    const del = ce('button', 'btn sm danger', '删除');
+    del.type = 'button';
+    del.onclick = async () => {
+      if (!confirm(`删除 MCP server「${s.name || s.id}」？会立即断开连接。`)) return;
+      try {
+        const r = await api.mcpRemove(s.id);
+        if (!r || !r.ok) throw new Error((r && r.error) || '删除失败');
+        await renderMcp();
+      } catch (e) {
+        toast('删除失败：' + e.message, true);
+      }
+    };
+    btns.appendChild(del);
+    card.appendChild(btns);
+
+    const tools = (s.toolNames || []).slice(0, 20);
+    if (tools.length) {
+      const tl = ce('div', 'hint-text');
+      tl.style.cssText = 'margin-top:8px;line-height:1.7';
+      tl.textContent = '工具：' + tools.join('、');
+      card.appendChild(tl);
+    }
     host.appendChild(card);
   });
 }
@@ -17795,7 +19866,7 @@ async function previewFriendShare() {
 let cloudBackupReady = false;
 
 function cloudBackupLocked() {
-  infoModal('功能正在开发', '云端备份还在开发中，请稍后。');
+  infoModal('云端备份未开启', '请先在本页勾选「启用云端备份」，再使用备份、还原或删除。');
 }
 
 async function renderCloudBackupPanel() {
@@ -17812,8 +19883,8 @@ async function renderCloudBackupPanel() {
   cloudBackupReady = on;
   $('cb-enabled').checked = on;
   if (!on) {
-    hint.textContent = '功能开发中：点击下方按钮只会提示「请稍后」，不会上传或下载任何内容';
-    $('cb-list').innerHTML = '<div class="hint-text">开启「开发验证」后，这里会显示云端备份列表。</div>';
+    hint.textContent = '云端备份未开启：勾选上方开关后可用；开启不会自动上传，点「立即备份到云端」才会传。';
+    $('cb-list').innerHTML = '<div class="hint-text">开启「启用云端备份」后，这里会显示云端备份列表。</div>';
     return;
   }
   if (!st.webdavConfigured) {
@@ -17848,20 +19919,90 @@ async function refreshCloudBackupList() {
     list.innerHTML = backups.map((b) => {
       const saves = Array.isArray(b.saves) ? b.saves : [];
       const size = b.totalSize || saves.reduce((n, s) => n + (s.size || 0), 0);
+      const names = (Array.isArray(b.instances) ? b.instances : []).map((x) => (x && x.name) || '').filter(Boolean);
+      const namesText = names.length ? names.slice(0, 6).join('、') + (names.length > 6 ? ` 等 ${names.length} 个` : '') : '未记录实例名';
       return `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:8px">
-        <div>
+        <div style="min-width:0">
           <div style="font-weight:600;font-size:13px">${escapeHtml(b.id)}</div>
           <div class="hint-text">${new Date(b.createdAt || 0).toLocaleString()} · ${b.instanceCount || 0} 个实例 · 存档 ${saves.length} 包${size ? ' · ' + formatSize(size) : ''}</div>
+          <div class="hint-text" style="word-break:break-all">实例：${escapeHtml(namesText)}${b.includeSaves === false ? ' · 仅配置' : ''}</div>
         </div>
-        <button class="btn sm" data-cb-restore="${escapeHtml(b.id)}" type="button">还原</button>
+        <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">
+          <button class="btn sm" data-cb-restore="${escapeHtml(b.id)}" type="button">还原</button>
+          <button class="btn sm ghost" data-cb-delete="${escapeHtml(b.id)}" type="button" style="color:#fca5a5">删除</button>
+        </div>
       </div>`;
     }).join('');
     list.querySelectorAll('[data-cb-restore]').forEach((btn) => {
       btn.onclick = () => askRestoreCloudBackup(btn.getAttribute('data-cb-restore'));
     });
+    list.querySelectorAll('[data-cb-delete]').forEach((btn) => {
+      btn.onclick = () => askDeleteCloudBackup(btn.getAttribute('data-cb-delete'));
+    });
     if (r.warnings && r.warnings.length) hint.textContent = r.warnings.join('；');
   } catch (e) {
     list.innerHTML = `<div class="hint-text" style="color:#fca5a5">读取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function askPruneCloudBackups() {
+  if (!cloudBackupReady) {
+    cloudBackupLocked();
+    return;
+  }
+  const keep = Math.min(50, Math.max(1, Number($('cb-keep').value) || 5));
+  $('cb-keep').value = String(keep);
+  infoModal('清理旧备份', `除最近 <b>${keep}</b> 份外，其余云端备份会从 WebDAV 永久删除。<br>
+    本机实例和存档不受影响，删除后无法从这些旧备份还原。`, [
+    { text: '取消' },
+    { text: '开始清理', onClick: () => doPruneCloudBackups(keep) },
+  ]);
+}
+
+async function doPruneCloudBackups(keep) {
+  const hint = $('cb-hint');
+  if (hint) hint.textContent = '正在清理旧备份…';
+  try {
+    const r = await api.cloudBackupPrune(keep);
+    if (!r || !r.ok) {
+      if (hint) hint.textContent = '清理失败：' + ((r && r.error) || '启动器没有返回原因');
+      return;
+    }
+    toast(r.removed ? `已清理 ${r.removed} 份旧备份，保留 ${r.kept} 份` : `没有需要清理的旧备份（共 ${r.kept} 份）`);
+    if (r.failures && r.failures.length) {
+      infoModal('清理完成，但有失败项', `<ul style="margin-left:18px">${r.failures.map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`);
+    }
+    await refreshCloudBackupList();
+  } catch (e) {
+    if (hint) hint.textContent = '清理失败：' + e.message;
+  }
+}
+
+function askDeleteCloudBackup(id) {
+  if (!cloudBackupReady) {
+    cloudBackupLocked();
+    return;
+  }
+  infoModal('删除云端备份', `确定删除 <b>${escapeHtml(id)}</b>？<br>
+    这个备份会从 WebDAV 永久删除，本机已有的实例和存档不受影响，但删除后无法从这个备份还原。`, [
+    { text: '取消' },
+    { text: '删除', onClick: () => doDeleteCloudBackup(id) },
+  ]);
+}
+
+async function doDeleteCloudBackup(id) {
+  const hint = $('cb-hint');
+  if (hint) hint.textContent = '正在删除云端备份…';
+  try {
+    const r = await api.cloudBackupDelete(id);
+    if (!r || !r.ok) {
+      if (hint) hint.textContent = '删除失败：' + ((r && r.error) || '启动器没有返回原因');
+      return;
+    }
+    toast('云端备份已删除');
+    await refreshCloudBackupList();
+  } catch (e) {
+    if (hint) hint.textContent = '删除失败：' + e.message;
   }
 }
 
@@ -17965,7 +20106,7 @@ function renderSettings(page) {
         <label>主题色（界面强调色）</label>
         <div class="accent-dots" id="accent-dots"></div>
         <div class="accent-custom">
-          <input type="color" id="accent-picker" title="自己挑一个颜色" value="#0a84ff">
+          <input type="color" id="accent-picker" class="accent-picker-native" title="自己挑一个颜色" value="#0a84ff">
           <input class="input" id="accent-hex" maxlength="7" placeholder="#0A84FF" spellcheck="false" style="width:110px">
           <button class="btn sm" id="accent-apply" type="button">用这个颜色</button>
           <span class="hint-text">也可以直接填色号，比如 #7C3AED</span>
@@ -17974,6 +20115,20 @@ function renderSettings(page) {
       <div class="field">
         <label>外观模式</label>
         <div class="ui-opts" id="ui-theme"></div>
+      </div>
+      <div class="field">
+        <label>启动动画</label>
+        <div class="row">
+          <select class="input" id="splash-theme" style="min-width:190px"></select>
+          <label class="ui-check"><input type="checkbox" id="splash-disabled"> 不再显示启动动画</label>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn sm" id="splash-import" type="button">导入主题包</button>
+          <button class="btn sm primary" id="splash-studio" type="button">动画工作室</button>
+          <button class="btn sm" id="splash-open-themes" type="button">打开主题目录</button>
+          <span class="hint-text" id="splash-import-hint"></span>
+        </div>
+        <div class="hint-text" id="splash-theme-hint">主题包放在配置目录的 themes 文件夹；缺文件或 manifest 损坏会自动回落默认。</div>
       </div>
       <div class="field">
         <label>液态玻璃 · 材质</label>
@@ -18404,6 +20559,64 @@ function renderSettings(page) {
       <div id="plugin-list" style="margin-top:14px"></div>
     </div>
 
+    <div class="glass" id="mcp-block" style="padding:22px;margin-top:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:6px">MCP 工具服务器</div>
+      <div class="page-sub" style="margin-bottom:14px">MCP 是给星云 AI 加外部工具的标准协议。支持本地命令（stdio）和 HTTP / SSE 远程 server；连接只在主进程里建立，安装前会显示完整启动命令或连接地址；停用或删除会立即断开。只装你信任的来源。</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="mcp-refresh" type="button">刷新状态</button>
+        <button class="btn" id="mcp-sample" type="button">安装示例服务器</button>
+        <button class="btn primary" id="mcp-add-toggle" type="button">＋ 添加服务器</button>
+        <button class="btn" id="mcp-open-dir" type="button">打开 MCP 目录</button>
+        <span class="hint-text" id="mcp-hint"></span>
+      </div>
+      <div id="mcp-form" style="display:none;margin-top:16px;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:12px">
+        <div class="field">
+          <label>ID</label>
+          <input class="input" id="mcp-id" maxlength="40" placeholder="例如 web-search（小写字母、数字、-、_）" spellcheck="false">
+        </div>
+        <div class="field">
+          <label>显示名称</label>
+          <input class="input" id="mcp-name" maxlength="60" placeholder="例如 网页搜索">
+        </div>
+        <div class="field">
+          <label>连接方式</label>
+          <select class="input" id="mcp-transport">
+            <option value="stdio">本地命令（stdio）</option>
+            <option value="streamable">HTTP（Streamable HTTP）</option>
+            <option value="sse">HTTP（旧版 SSE）</option>
+          </select>
+        </div>
+        <div id="mcp-stdio-fields">
+          <div class="field">
+            <label>启动命令</label>
+            <input class="input" id="mcp-command" placeholder="例如 npx.cmd 或 C:\\Tools\\server.exe" spellcheck="false">
+            <div class="hint-text">Windows 下 npm / npx 请写完整文件名，如 <code>npx.cmd</code>；程序路径带空格也能识别。</div>
+          </div>
+          <div class="field">
+            <label>参数</label>
+            <textarea class="input" id="mcp-args" rows="3" placeholder="每行一个参数，或直接填 JSON 数组：[&quot;-y&quot;,&quot;@modelcontextprotocol/server-filesystem&quot;,&quot;D:\\Docs&quot;]" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="mcp-http-fields" style="display:none">
+          <div class="field">
+            <label>MCP 地址</label>
+            <input class="input" id="mcp-url" placeholder="https://example.com/mcp" spellcheck="false">
+            <div class="hint-text">Streamable HTTP 填 MCP 端点本身；旧版 SSE 填返回 <code>event: endpoint</code> 的 SSE 地址。非 HTTPS 只建议本机或内网使用。</div>
+          </div>
+          <div class="field">
+            <label>自定义请求头（可选）</label>
+            <textarea class="input" id="mcp-headers" rows="3" placeholder="{&quot;Authorization&quot;:&quot;Bearer 你的令牌&quot;}" spellcheck="false"></textarea>
+            <div class="hint-text">JSON 对象，值只能是字符串。用于 Bearer Token、API Key 等鉴权；请求头会随 server 记录保存在本机。</div>
+          </div>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn primary" id="mcp-add" type="button">安装并连接</button>
+          <button class="btn" id="mcp-add-cancel" type="button">取消</button>
+        </div>
+      </div>
+      <div id="mcp-list" style="margin-top:14px"></div>
+    </div>
+
     <div class="glass" id="sync-block" style="padding:22px;margin-top:18px">
       <div class="page-title" style="font-size:17px;margin-bottom:6px">云同步（WebDAV）</div>
       <div class="page-sub" style="margin-bottom:14px">用你自己的 WebDAV 空间手动上传 / 下载。同步内容只有设置白名单、实例逻辑配置和模组清单；账号令牌、游戏路径、模组 jar 与存档（除非你单独开启）都不会上传</div>
@@ -18483,14 +20696,20 @@ function renderSettings(page) {
     <div class="glass" id="cloud-backup-block" style="padding:22px;margin-top:18px">
       <div class="row" style="gap:10px;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div class="page-title" style="font-size:17px;margin:0">云端备份</div>
-        <span style="font-size:11px;padding:2px 9px;border-radius:999px;background:rgba(251,191,36,.14);color:#fbbf24;border:1px solid rgba(251,191,36,.35)">开发中</span>
+        <span style="font-size:11px;padding:2px 9px;border-radius:999px;background:rgba(52,211,153,.14);color:#34d399;border:1px solid rgba(52,211,153,.35)">WebDAV</span>
       </div>
-      <div class="page-sub" style="margin-bottom:14px">把实例配置和存档备份到云同步使用的 WebDAV，可列出云端已有备份并还原。功能默认锁住；下方开关仅用于提前验证真实链路</div>
-      <label class="ui-check"><input type="checkbox" id="cb-enabled"> 开发验证：启用真实的云端备份（默认关闭）</label>
+      <div class="page-sub" style="margin-bottom:14px">把实例配置和存档备份到云同步使用的 WebDAV，可列出、还原或删除云端备份。默认关闭，开启后只有点「立即备份到云端」才会上传。</div>
+      <label class="ui-check"><input type="checkbox" id="cb-enabled"> 启用云端备份（默认关闭）</label>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px">
         <button class="btn primary" id="cb-create" type="button">立即备份到云端</button>
         <button class="btn" id="cb-refresh" type="button">刷新云端备份</button>
         <span class="hint-text" id="cb-hint"></span>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <span class="hint-text">清理旧备份：只保留最近</span>
+        <input class="input" type="number" id="cb-keep" min="1" max="50" value="5" style="width:72px">
+        <span class="hint-text">份</span>
+        <button class="btn sm ghost" id="cb-prune" type="button">清理旧备份</button>
       </div>
       <div id="cb-list" style="margin-top:12px"></div>
       <div class="hint-text" id="cb-foot" style="margin-top:10px">单个存档包上限 512 MB；覆盖本机存档前会先改名备份。备份不包含账号、密码、游戏路径和 Java 路径。</div>
@@ -18498,13 +20717,13 @@ function renderSettings(page) {
 
     <div class="glass" id="up-block" style="padding:22px;margin-top:18px">
       <div class="page-title" style="font-size:17px;margin-bottom:6px">更新</div>
-      <div class="page-sub" style="margin-bottom:14px">正式版只推经过测试的整版更新；测试版每个小版本都会推送。更新日志也按通道分开显示，正式版会自动合并测试版条目</div>
+      <div class="page-sub" style="margin-bottom:14px">正式版、测试版、手机版各自读取同一个仓库下的独立目录，三个更新地址不再共用。正式版只推整版更新，测试版每个小版本都推送，手机版单独走手机版目录。</div>
       <div class="field">
         <label>更新通道</label>
         <div class="seg-group" id="up-channel" role="tablist" aria-label="更新通道">
           <button type="button" class="seg" data-channel="stable" role="tab">正式版</button>
           <button type="button" class="seg" data-channel="beta" role="tab">测试版</button>
-          <button type="button" class="seg" data-channel="android" role="tab">安卓专用</button>
+          <button type="button" class="seg" data-channel="android" role="tab">手机版</button>
         </div>
         <div class="hint-text" id="up-channel-hint"></div>
       </div>
@@ -18516,7 +20735,7 @@ function renderSettings(page) {
           <button class="btn sm" id="up-open-dir" type="button">打开本机更新源</button>
         </div>
       </div>
-      <div class="hint-text" style="margin-top:-4px">更新地址跟着通道自动切换，不需要手填。安卓专用通道只认 .apk 和 -android.N 版号，不会把安卓包当成 Windows 更新；目录里放 update.json 就优先用本机更新源。当前版本 <b id="up-cur">—</b>。</div>
+      <div class="hint-text" style="margin-top:-4px">三个通道在同一个 GitHub 仓库里各用各的目录：正式版 updates/stable、测试版 updates/beta、手机版 updates/mobile，地址互不相同。手机版只认 .apk 和 -android.N 版号，不会把手机包装成 Windows 更新；目录里放 update.json 就优先用本机更新源。当前版本 <b id="up-cur">—</b>。</div>
       <label class="ui-check"><input type="checkbox" id="up-auto"> 启动时自动检查更新（6 小时内只查一次）</label>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">
         <button class="btn primary" id="up-check" type="button">检查更新</button>
@@ -18538,7 +20757,7 @@ function renderSettings(page) {
             <button type="button" class="seg" data-channel="all" role="tab">全部</button>
             <button type="button" class="seg" data-channel="stable" role="tab">正式版</button>
             <button type="button" class="seg" data-channel="beta" role="tab">测试版</button>
-            <button type="button" class="seg" data-channel="android" role="tab">安卓专用</button>
+            <button type="button" class="seg" data-channel="android" role="tab">手机版</button>
           </div>
           <button class="btn sm" id="gh-log-refresh" type="button">从 GitHub 同步</button>
         </div>
@@ -18597,20 +20816,31 @@ function renderSettings(page) {
         • <b>electron-store / conf / dot-prop / env-paths / atomically</b> — MIT<br>
         • <b>axios / follow-redirects / form-data / combined-stream / ws / isomorphic-ws</b> — MIT<br>
         • <b>yauzl / fd-slicer / pend / buffer-crc32</b> — MIT；<b>extract-zip</b> — BSD-2-Clause<br>
-        • <b>ajv-formats / fast-uri / json-schema-typed / ieee754</b> 等 — MIT / BSD-2 / BSD-3-Clause<br><br>
+        • <b>ajv-formats / fast-uri / json-schema-typed / ieee754</b> 等 — MIT / BSD-2 / BSD-3-Clause<br>
+        <span style="opacity:.75">sherpa-onnx-node、franc-min、Node.js 与 .NET 运行时的许可证原文也放在安装目录 third-party-licenses 下。</span><br><br>
         <b>核心能力</b><br>
         • <b>sherpa-onnx</b>（离线神经语音，Apache-2.0）© k2-fsa 项目组<br>
         • <b>VITS 中文语音模型 fanchen-C</b>（Apache-2.0）© csukuangfj<br>
         • <b>msedge-tts</b>（免 Key 多音色神经语音，MIT）© Migushthe2nd<br>
         • <b>franc-min</b>（朗读语种识别，MIT）© Titus Wormer<br>
-        • <b>cubiomes</b>（种子地图 / 群系计算，MIT）© Cubitect<br><br>
+        • <b>cubiomes</b>（种子地图 / 群系计算，MIT）© Cubitect<br>
+        • <b>离线 ASR</b>：Paraformer 中文（Apache-2.0）/ OpenAI Whisper base（MIT）<br><br>
         <b>Java 运行时（按需下载，不随安装包内置）</b><br>
         • <b>Eclipse Temurin / Adoptium</b> — GPLv2 + Classpath Exception © Eclipse Adoptium<br>
         • <b>Microsoft Build of OpenJDK</b> — GPLv2 + Classpath Exception © Microsoft<br>
         <span style="opacity:.75">启动器只调用官方下载源；GPLv2 + Classpath Exception 不要求启动器开源，但会随附许可证与源码获取方式。</span><br><br>
         <b>联机（二进制原样内置，只当独立进程调用）</b><br>
-        • <b>Terracotta 陶瓦联机</b> — AGPL-3.0-or-later © Burning_TNT<br>
-        • <b>EasyTier</b> — LGPL-3.0 © EasyTier 项目组及贡献者；许可证原文见 resources/tools/easytier/LICENSE.txt<br><br>
+        • <b>Terracotta 陶瓦联机</b> — AGPL-3.0-or-later（附例外条款）© Burning_TNT；许可证原文见 resources/tools/taohua/LICENSE.txt<br>
+        • <b>EasyTier</b> — LGPL-3.0 © EasyTier 项目组及贡献者；许可证原文见 resources/tools/easytier/LICENSE.txt<br>
+        • <b>WinDivert</b> — LGPL-3.0 / GPL-2.0 双许可 © Basil；原文见 resources/tools/easytier/LICENSE-WinDivert.txt<br>
+        • <b>Wintun</b> — WireGuard 预编译二进制许可 © WireGuard LLC；原文见 resources/tools/easytier/LICENSE-Wintun.txt<br>
+        • <b>Npcap</b> — <b>不随星云安装包分发</b>。EasyTier 在 Windows 上需要系统已安装 Npcap 提供的 Packet.dll；许可证禁止再分发，请用户自行从 npcap.com 安装。说明文本见 third-party-licenses/NPCAP-LICENSE.txt<br><br>
+        <b>陶瓦联机与替换说明</b><br>
+        星云启动器和陶瓦联机是<b>两个独立程序</b>，不是合并编译。星云只通过陶瓦官方的本机 HTTP 接口（--hmcl 端口文件、/state 等）开房 / 进房 / 退房；随包内置的是官方 v0.4.2 <b>未经修改</b>的二进制，对应源码标签 v0.4.2。<br>
+        陶瓦联机遵循 <b>AGPL-3.0-or-later（附例外条款）</b>，源码与许可证原文：
+        <a href="https://github.com/burningtnt/Terracotta" target="_blank" rel="noreferrer" style="color:#7cc4ff">github.com/burningtnt/Terracotta</a><br>
+        玩家可以自行替换陶瓦程序：在「联机工具 → 陶瓦联机 → 指定」选择自己的 terracotta.exe。替换版只要实现同一套本机 HTTP 接口即可被星云识别，星云不做额外锁死或校验。星云启动器本体是独立程序，不受陶瓦联机许可证约束。<br>
+        <span style="opacity:.75">注意：陶瓦是 AGPL，不是 LGPL。复制或修改陶瓦源码会失去「未修改二进制」例外，修改版须按 AGPL 提供对应源码；本项目不采用该路线，只调用未修改的官方二进制。</span><br><br>
         <b>第三方客户端 / 游戏加载器</b><br>
         • <b>Horizon</b> — MIT License © horizon-rust 项目及贡献者；仅展示官方下载链接<br>
         • <b>ClassiCube</b> — BSD-3-Clause © ClassiCube 项目及贡献者；仅展示官方下载链接<br>
@@ -18624,6 +20854,19 @@ function renderSettings(page) {
         <b>关于星云启动器本身</b><br>
         启动器界面、启动逻辑、实例管理、搬家和 AI 部分都是自研代码，目前<b>不开源</b>；
         用到的第三方开源组件（上面的清单）按其许可证要求署名、保留许可证原文，未做任何闭源化改写。
+      </div>
+    </div>
+
+    <div class="glass" style="padding:22px;margin-top:18px">
+      <div class="page-title" style="font-size:17px;margin-bottom:6px">免责声明</div>
+      <div class="hint-text" style="line-height:1.85">
+        1. 星云启动器是<b>非官方第三方工具</b>，与 Mojang Studios、Microsoft、Minecraft 官方无隶属或授权关系；Minecraft 名称、图标与游戏素材版权归其各自权利人所有。<br>
+        2. 启动器不提供游戏本体、正版账号或绕过正版验证的能力。正版登录、第三方登录的凭据只保存在本机，由玩家自行保管；因账号借出、共享或泄露造成的封禁、损失由玩家自行承担。<br>
+        3. 联机功能依赖第三方组网 / 中继服务（EasyTier、陶瓦等）与玩家网络环境，可能出现连不上、延迟高、掉线、IP 暴露等情况；请只和信任的人联机，不要在里面传敏感信息。联机产生的流量、费用与风险由玩家自行承担。<br>
+        4. 第三方组件按各自许可证分发与署名；陶瓦为 AGPL-3.0-or-later（附例外），EasyTier 为 LGPL-3.0，WinDivert 为 LGPL-3.0 / GPL-2.0，均为独立程序调用，不改变星云本体闭源。Npcap 不是开源软件且禁止再分发，因此启动器不附带 Packet.dll，用户需自行安装 Npcap；相关许可证原文随包保留。<br>
+        5. 本软件按“现状”提供，不承诺无错误或不中断。安装 Mod、整合包、服务端、第三方启动器或修改游戏文件前请自行备份；因使用本软件导致的数据丢失、存档损坏、电脑异常，作者不承担赔偿责任（法律强制规定的除外）。<br>
+        6. 请遵守游戏 EULA、服务器规则与当地法律；禁止用本软件传播外挂、盗版、恶意模组或进行攻击、诈骗等行为。<br>
+        7. 跨启动器联机使用公开的邀请码 / 房号约定，属于尽力兼容。星云与 PCL2、PCL CE、HMCL、FCL 等项目无隶属或合作关系；对方版本变更、房间过期、公共节点失效或网络不通时可能加入失败。
       </div>
     </div>
 
@@ -18721,6 +20964,7 @@ function renderSettings(page) {
   ACCENTS.forEach((a) => {
     const dot = ce('div', 'accent-dot' + (c.accent === a.id ? ' active' : ''));
     dot.style.background = a.color;
+    dot.style.color = a.color;
     dot.onclick = () => {
       c.accent = a.id;
       document.querySelectorAll('.accent-dot').forEach((x) => x.classList.remove('active'));
@@ -18736,6 +20980,7 @@ function renderSettings(page) {
   customDot.style.background = accentHexRgb(String(c.accent || ''))
     ? String(c.accent)
     : 'conic-gradient(from 0deg, #ff8a8a, #ffd36a, #8ef0a0, #7ad8ff, #b79bff, #ff8ad8, #ff8a8a)';
+  customDot.style.color = accentHexRgb(String(c.accent || '')) ? String(c.accent) : '#ffffff';
   ad.appendChild(customDot);
 
   const picker = $('accent-picker');
@@ -18754,6 +20999,7 @@ function renderSettings(page) {
     picker.value = norm;
     hexInput.value = norm.toUpperCase();
     customDot.style.background = norm;
+    customDot.style.color = norm;
     document.querySelectorAll('.accent-dot').forEach((x) => x.classList.remove('active'));
     customDot.classList.add('active');
     applyAndSave({ accent: norm });
@@ -19396,6 +21642,94 @@ function renderSettings(page) {
   };
   renderPlugins();
 
+  // ========== MCP 工具服务器 ==========
+  const showMcpForm = (on) => {
+    const form = $('mcp-form');
+    if (form) form.style.display = on ? '' : 'none';
+    if (on) { const id = $('mcp-id'); if (id) id.focus(); }
+  };
+  const syncMcpTransportFields = () => {
+    const mode = $('mcp-transport').value;
+    const isStdio = mode === 'stdio';
+    $('mcp-stdio-fields').style.display = isStdio ? '' : 'none';
+    $('mcp-http-fields').style.display = isStdio ? 'none' : '';
+  };
+  $('mcp-transport').onchange = syncMcpTransportFields;
+  syncMcpTransportFields();
+  $('mcp-add-toggle').onclick = () => showMcpForm($('mcp-form').style.display === 'none');
+  $('mcp-add-cancel').onclick = () => showMcpForm(false);
+  $('mcp-refresh').onclick = async () => {
+    $('mcp-hint').textContent = '刷新中…';
+    await renderMcp();
+    $('mcp-hint').textContent = '已刷新';
+  };
+  $('mcp-open-dir').onclick = async () => {
+    try {
+      const r = await api.mcpOpenDir();
+      if (typeof r === 'string' && r) $('mcp-hint').textContent = '无法打开目录：' + r;
+    } catch (e) {
+      $('mcp-hint').textContent = '打开失败：' + e.message;
+    }
+  };
+  $('mcp-sample').onclick = async () => {
+    $('mcp-hint').textContent = '安装示例中…';
+    try {
+      const r = await api.mcpInstallSample();
+      if (!r || !r.ok) {
+        $('mcp-hint').textContent = r && r.canceled ? '已取消' : ((r && r.error) || '安装失败');
+        return;
+      }
+      $('mcp-hint').textContent = '示例 MCP 已连接';
+      await renderMcp();
+    } catch (e) {
+      $('mcp-hint').textContent = '安装失败：' + e.message;
+    }
+  };
+  $('mcp-add').onclick = async () => {
+    const id = $('mcp-id').value.trim();
+    const name = $('mcp-name').value.trim() || id;
+    const mode = $('mcp-transport').value;
+    if (!/^[a-z0-9][a-z0-9-_]{1,39}$/.test(id)) return toast('MCP id 只能用小写字母、数字、-、_，2–40 位', true);
+    let transport;
+    if (mode === 'stdio') {
+      const command = $('mcp-command').value.trim();
+      if (!command) return toast('请填写启动命令', true);
+      let args = [];
+      try { args = parseMcpArgs($('mcp-args').value); } catch (e) { return toast('参数格式不对：' + e.message, true); }
+      transport = { type: 'stdio', command, args };
+    } else {
+      const url = $('mcp-url').value.trim();
+      if (!/^https?:\/\//i.test(url)) return toast('请填写 http:// 或 https:// 开头的 MCP 地址', true);
+      let headers = {};
+      try { headers = parseMcpHeaders($('mcp-headers').value); } catch (e) { return toast('请求头格式不对：' + e.message, true); }
+      transport = { type: 'http', url, protocol: mode === 'sse' ? 'sse' : 'streamable', headers };
+    }
+    $('mcp-hint').textContent = '等待确认安装…';
+    try {
+      const r = await api.mcpAdd({
+        id,
+        name,
+        desc: '',
+        source: 'local',
+        verified: false,
+        enabled: true,
+        transport,
+        permissions: ['工具调用'],
+      });
+      if (!r || !r.ok) {
+        $('mcp-hint').textContent = r && r.canceled ? '已取消安装' : ((r && r.error) || '安装失败');
+        return;
+      }
+      $('mcp-hint').textContent = '已安装，正在连接';
+      ['mcp-id', 'mcp-name', 'mcp-command', 'mcp-args', 'mcp-url', 'mcp-headers'].forEach((x) => { const el = $(x); if (el) el.value = ''; });
+      showMcpForm(false);
+      await renderMcp();
+    } catch (e) {
+      $('mcp-hint').textContent = '安装失败：' + e.message;
+    }
+  };
+  renderMcp();
+
   // ========== 云同步（WebDAV） ==========
   $('sync-test').onclick = async () => {
     const btn = $('sync-test');
@@ -19646,6 +21980,7 @@ function renderSettings(page) {
     }
     refreshCloudBackupList();
   };
+  $('cb-prune').onclick = () => askPruneCloudBackups();
   renderCloudBackupPanel();
 
   $('btn-fix-chinese').onclick = async () => {
@@ -19874,7 +22209,9 @@ function renderSettings(page) {
   const up = state.config.update || {};
   const cleanUrl = (v, fallback) => {
     const s = String(v || '').trim();
-    return /releases\/latest\/download\/update\.json/i.test(s) ? fallback : (s || fallback);
+    // 老版本把测试版和手机版都指向同一个 releases 列表，迁移时直接回到各自的目录
+    if (!s || /api\.github\.com\/repos\/BlockVibe001\/cm-launcher\/releases/i.test(s)) return fallback;
+    return /releases\/latest\/download\/update\.json/i.test(s) ? fallback : s;
   };
   const upUrls = {
     stable: cleanUrl(up.urlStable || up.url, DEFAULT_UPDATE_URL),
@@ -19918,14 +22255,14 @@ function renderSettings(page) {
     const hint = $('up-channel-hint');
     if (hint) {
       hint.textContent = upChannel === 'beta'
-        ? '测试版：每个小版本都推送，更新更勤，适合愿意帮忙测试的人'
+        ? '测试版：读取 updates/beta 目录，每个小版本都推送，更新更勤，适合愿意帮忙测试的人'
         : upChannel === 'android'
-          ? '安卓专用：独立版号（1.0.68-android.N）和独立日志，不覆盖 Windows 版本；Windows 端只查看/下载 APK，不自动安装'
-          : '正式版：只推经过完整测试的整版更新，更稳，更新频率低';
+          ? '手机版：读取 updates/mobile 目录，独立版号（1.0.68-android.N）和独立日志；电脑端只查看/下载 APK，不自动安装'
+          : '正式版：读取 updates/stable 目录，只推经过完整测试的整版更新，更稳，更新频率低';
     }
     const cur = (state.updateInfo || {}).version || '1.0.0';
     $('up-cur').textContent = upChannel === 'android'
-      ? `Windows v${cur} · 安卓专用通道（独立版号）`
+      ? `Windows v${cur} · 手机版独立通道（独立版号）`
       : `v${cur} · ${updateChannelLabel(upChannel)}通道`;
   };
   if (upChannelBox) {
@@ -19961,7 +22298,7 @@ function renderSettings(page) {
   };
   refreshUpActions(pendingUpdate
     ? (pendingUpdate.platform === 'android'
-      ? `安卓专用版本 v${pendingUpdate.latest}（可打开下载页获取 APK）`
+      ? `手机版版本 v${pendingUpdate.latest}（可打开下载页获取 APK）`
       : `发现新版本 v${pendingUpdate.latest}（当前 v${pendingUpdate.current}）`
         + ((state.updateInfo || {}).portable ? ' · 免安装版请到下载页取新版' : ''))
     : '');
@@ -20053,7 +22390,7 @@ function renderSettings(page) {
       const version = log.version ? `v${log.version}` : (log.title || log.tag || '未标注版本');
       const channel = changelogChannel(log);
       const channelBadge = channel === 'android'
-        ? '<span class="gh-log-android">安卓专用</span>'
+        ? `<span class="gh-log-android">手机版</span>`
         : channel === 'stable'
           ? '<span class="gh-log-stable">正式版</span>'
           : '<span class="gh-log-pre">测试版</span>';
@@ -20075,7 +22412,7 @@ function renderSettings(page) {
         status.textContent = 'GitHub 读取失败：' + githubLogCache.errors.join('；') + '（已显示本机全部记录）';
       } else if (gh.length) status.textContent = `已同步 ${gh.length} 条 GitHub 记录`;
       else status.textContent = '尚未从 GitHub 同步，当前只显示本机记录';
-      if (changelogChannelFilter !== 'all') status.textContent += ` · 当前只看${changelogChannelFilter === 'stable' ? '正式版' : changelogChannelFilter === 'android' ? '安卓专用版' : '测试版'}`;
+      if (changelogChannelFilter !== 'all') status.textContent += ` · 当前只看${changelogChannelFilter === 'stable' ? '正式版' : changelogChannelFilter === 'android' ? '手机版' : '测试版'}`;
     }
     if (count) count.textContent = `共 ${merged.length} 条 · 本机 ${local.length} 条 · GitHub ${gh.length} 条`;
   }
@@ -20178,12 +22515,12 @@ function renderSettings(page) {
       $('up-fill').style.width = '0';
       const source = res.source === 'local' ? '本机更新源' : '网络更新源';
       const status = res.platform === 'android'
-        ? `安卓专用版本 v${res.latest}（Windows 端不自动安装；可打开下载页获取 APK · ${updateChannelLabel(upChannel)}通道 · ${source}）`
+        ? `手机版版本 v${res.latest}（Windows 端不自动安装；可打开下载页获取 APK · ${updateChannelLabel(upChannel)}通道 · ${source}）`
         : res.hasUpdate
           ? `发现新版本 v${res.latest}（当前 v${res.current} · ${updateChannelLabel(upChannel)}通道 · ${source}）${res.portable ? ' · 免安装版请到下载页取新版' : ''}`
           : `已是最新版 v${res.current}（${updateChannelLabel(upChannel)}通道 · ${source}）`;
       refreshUpActions(status);
-      toast(res.platform === 'android' ? `安卓专用版本 v${res.latest}` : (res.hasUpdate ? `发现新版本 v${res.latest}` : '已是最新版'));
+      toast(res.platform === 'android' ? `手机版版本 v${res.latest}` : (res.hasUpdate ? `发现新版本 v${res.latest}` : '已是最新版'));
     } catch (e) {
       toast(`检查更新失败：${e.message}`, true);
       $('up-status').textContent = `检查失败：${e.message}`;
@@ -20520,18 +22857,29 @@ function renderSettings(page) {
         tip.textContent = `已取消管理员授权，${LEVEL_NAME[r.level]}清理未执行。重新点击清理并在 UAC 框里选「是」即可。`;
         toast('已取消管理员授权', true);
       } else {
-        const sysFreed = r.systemFreedMB;
+        const standbyFreed = r.standbyFreedMB || 0;
+        const selfFreed = Math.max(0, (r.appBeforeMB || 0) - (r.appAfterMB || 0));
         const standbyOk = r.lowStandbyStatus === 0 || r.standbyStatus === 0;
-        const parts = [`【${'一二三四五六'[r.level - 1]}级 · ${LEVEL_NAME[r.level]}】本次释放系统内存 ${fmtMem(sysFreed)}`];
+        const parts = [`【${'一二三四五六'[r.level - 1]}级 · ${LEVEL_NAME[r.level]}】`];
+        if (standbyFreed > 0) parts.push(`清空待机缓存 ${fmtMem(standbyFreed)}`);
+        if (selfFreed > 0) parts.push(`启动器自身释放 ${fmtMem(selfFreed)}`);
+        if (standbyFreed <= 0 && selfFreed <= 0) {
+          parts.push('没有可回收的缓存，内存主要被正在运行的程序占用，关掉不用的程序才有效');
+        }
         parts.push(`启动器占用 ${fmtMem(r.appBeforeMB)} → ${fmtMem(r.appAfterMB)}`);
         if (r.sysTrimmed > 0) parts.push(`修剪进程 ${r.sysTrimmed} 个`);
-        if (r.level >= 3 && !standbyOk) parts.push('待机内存未能清空（可能被安全软件拦截）');
+        if (r.level >= 3 && !standbyOk) parts.push(r.elevatedFailed
+          ? '未获得管理员授权，待机缓存未清理（请允许 UAC 弹窗）'
+          : '待机缓存没被系统放行（可能被安全软件拦截）');
         let text = parts.join('，') + '。';
         if (r.level >= 3) {
           text += '清理会暂时清掉系统文件缓存，接下来短时间内打开程序、读存档可能稍慢，属正常现象。';
         }
         tip.textContent = text;
-        toast(sysFreed > 0 ? `已释放 ${fmtMem(sysFreed)}` : '内存已是低位');
+        toast(r.elevatedFailed ? '未获得管理员授权'
+          : standbyFreed > 0 ? `已清空待机缓存 ${fmtMem(standbyFreed)}`
+            : selfFreed > 0 ? `启动器释放 ${fmtMem(selfFreed)}`
+              : '没有可回收缓存，内存被运行中的程序占用');
       }
       await refreshMemInfo();
     } catch (e) {
@@ -20678,6 +23026,7 @@ function bindLiquidGlass() {
 function bindGlobalEvents() {
   bindDropImport();
   bindLiquidGlass();
+  if (api.onMcpConfirm) api.onMcpConfirm((p) => enqueueMcpConfirm(p));
   api.onProgress((p) => {
     if (state.currentPage === 'home') {
       showHomeProgress(`下载校验 ${p.completed}/${p.total} · ${p.current}`, p.percent);
@@ -20819,6 +23168,15 @@ function bindGlobalEvents() {
   // EasyTier 联机推过来的房间状态，交给联机页刷新
   api.onEasytierState((s) => {
     if (typeof state.etHook === 'function') state.etHook(s);
+  });
+  // Electron 下主建房/加入走 link:*；Tauri 适配层已把 link:* 映回 easytier，避免重复监听
+  if (api.onLinkState && !window.__TAURI__) {
+    api.onLinkState((s) => {
+      if (typeof state.etHook === 'function') state.etHook(s);
+    });
+  }
+  api.onNebulaState((s) => {
+    if (typeof state.nbHook === 'function') state.nbHook(s);
   });
   api.onMigrateProgress((p) => {
     const el = document.getElementById('mig-progress');
@@ -21761,6 +24119,7 @@ const AI_PERMISSION_KINDS = {
   computer: { title: '星云 AI 想打开软件', desc: '会打开你电脑上已安装的软件（微信 / QQ / Steam / 浏览器等），不会执行命令' },
   folder: { title: '星云 AI 想打开文件夹', desc: '会调用资源管理器打开你的游戏目录' },
   plugin: { title: '星云 AI 想写入一个插件', desc: '会把生成的 index.js 写入启动器 plugins 目录，并立即做语法和激活自检' },
+  mcp: { title: '星云 AI 想调用 MCP 工具', desc: '会把参数发给已安装的 MCP server，可能读取文件、写入文件或联网；主进程还会再确认一次' },
 };
 const aiPermissionPending = new Map();   // 同类权限正在等用户点按钮
 
@@ -22127,14 +24486,61 @@ const AI_AGENT_TOOL_DEFS = [
   },
 ];
 
+let AI_MCP_TOOL_DEFS = [];
+let aiMcpToolsLoadedAt = 0;
+
+function allAgentTools() {
+  return AI_AGENT_TOOL_DEFS.concat(AI_MCP_TOOL_DEFS);
+}
+
 function aiEnabledTools() {
   let off = [];
   try { off = JSON.parse(localStorage.getItem(AI_AGENT_PLUGINS_OFF_KEY) || '[]') || []; } catch (e) { off = []; }
-  return AI_AGENT_TOOL_DEFS.filter((t) => !off.includes(t.id));
+  return allAgentTools().filter((t) => !off.includes(t.id));
 }
 
 function aiToolById(id) {
-  return AI_AGENT_TOOL_DEFS.find((t) => t.id === id) || null;
+  return allAgentTools().find((t) => t.id === id) || null;
+}
+
+function mcpExampleArgs(schema) {
+  const props = (schema && schema.properties) || {};
+  const req = Array.isArray(schema && schema.required) ? schema.required : Object.keys(props).slice(0, 2);
+  const obj = {};
+  req.forEach((k) => {
+    const p = props[k] || {};
+    if (p.type === 'number' || p.type === 'integer') obj[k] = 0;
+    else if (p.type === 'boolean') obj[k] = false;
+    else if (p.type === 'array') obj[k] = [];
+    else obj[k] = '';
+  });
+  return JSON.stringify(obj);
+}
+
+async function loadMcpAgentTools(force) {
+  if (!api.mcpTools) return;
+  if (!force && Date.now() - aiMcpToolsLoadedAt < 10000 && AI_MCP_TOOL_DEFS.length) return;
+  try {
+    const list = await api.mcpTools();
+    AI_MCP_TOOL_DEFS = (Array.isArray(list) ? list : []).map((t) => ({
+      id: t.exposedName,
+      name: `${t.serverName || t.serverId} · ${t.name}`,
+      icon: '🔌',
+      perm: 'mcp',
+      mcpName: t.exposedName,
+      serverId: t.serverId,
+      desc: `[MCP] ${t.description || '外部工具'}`,
+      args: mcpExampleArgs(t.inputSchema),
+      run: async (a) => {
+        const r = await api.mcpCallTool(t.exposedName, a || {});
+        if (!r || !r.ok) throw new Error((r && r.error) || 'MCP 工具调用失败');
+        return r;
+      },
+    }));
+    aiMcpToolsLoadedAt = Date.now();
+  } catch (e) {
+    AI_MCP_TOOL_DEFS = [];
+  }
 }
 
 function parseAgentToolCalls(text) {
@@ -22214,17 +24620,19 @@ async function executeAgentTool(call) {
   }
 }
 
-function openAgentPluginPanel(afterClose) {
+async function openAgentPluginPanel(afterClose) {
   const old = $('ai-plugin-overlay');
   if (old) old.remove();
+  await loadMcpAgentTools(true);
   const off = (() => { try { return new Set(JSON.parse(localStorage.getItem(AI_AGENT_PLUGINS_OFF_KEY) || '[]') || []); } catch (e) { return new Set(); } })();
   const overlay = document.createElement('div');
   overlay.id = 'ai-plugin-overlay';
   overlay.className = 'ai-plugin-overlay';
+  const rows = (list, title) => list.length ? `<div class="ai-plugin-section">${escapeHtml(title)}</div>${list.map((t) => `<div class="ai-plugin-row" data-tool="${escapeHtml(t.id)}"><div class="ai-plugin-ico">${t.icon}</div><div class="ai-plugin-info"><div class="ai-plugin-name">${escapeHtml(t.name)}<span>${escapeHtml(t.id)}</span></div><div class="ai-plugin-desc">${escapeHtml(t.desc)}</div></div><label class="ai-plugin-toggle"><input type="checkbox" data-plugin-toggle="${escapeHtml(t.id)}" ${off.has(t.id) ? '' : 'checked'}><span></span></label></div>`).join('')}` : '';
   overlay.innerHTML = `<div class="ai-plugin-sheet">
     <div class="ai-plugin-head"><div><div class="ai-plugin-title">🧩 Agent 插件</div><div class="ai-plugin-sub">这些是 AI 能真实调用的本机工具；关掉就不会出现在提示词里。每次调用仍会单独请求授权。</div></div><button class="ai-icon-btn" id="ai-plugin-close" type="button">✕</button></div>
-    <div class="ai-plugin-list">${AI_AGENT_TOOL_DEFS.map((t) => `<div class="ai-plugin-row" data-tool="${t.id}"><div class="ai-plugin-ico">${t.icon}</div><div class="ai-plugin-info"><div class="ai-plugin-name">${t.name}<span>${t.id}</span></div><div class="ai-plugin-desc">${t.desc}</div></div><label class="ai-plugin-toggle"><input type="checkbox" data-plugin-toggle="${t.id}" ${off.has(t.id) ? '' : 'checked'}><span></span></label></div>`).join('')}</div>
-    <div class="ai-plugin-foot"><span id="ai-plugin-count">${AI_AGENT_TOOL_DEFS.length - off.size} / ${AI_AGENT_TOOL_DEFS.length} 已启用</span><button class="btn sm" id="ai-plugin-all" type="button">全部开启</button></div>
+    <div class="ai-plugin-list">${rows(AI_AGENT_TOOL_DEFS, '内置工具')}${rows(AI_MCP_TOOL_DEFS, 'MCP 工具')}</div>
+    <div class="ai-plugin-foot"><span id="ai-plugin-count">${allAgentTools().length - off.size} / ${allAgentTools().length} 已启用</span><button class="btn sm" id="ai-plugin-all" type="button">全部开启</button></div>
   </div>`;
   document.body.appendChild(overlay);
   const close = () => { overlay.remove(); if (afterClose) afterClose(); };
@@ -22233,7 +24641,7 @@ function openAgentPluginPanel(afterClose) {
   const updateCount = () => {
     const n = overlay.querySelectorAll('[data-plugin-toggle]:checked').length;
     const c = $('ai-plugin-count');
-    if (c) c.textContent = `${n} / ${AI_AGENT_TOOL_DEFS.length} 已启用`;
+    if (c) c.textContent = `${n} / ${allAgentTools().length} 已启用`;
   };
   overlay.querySelectorAll('[data-plugin-toggle]').forEach((cb) => {
     cb.onchange = () => {

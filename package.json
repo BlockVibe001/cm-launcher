@@ -1,68 +1,124 @@
 {
   "name": "nebula-launcher",
-  "version": "2.0.0",
-  "description": "星云启动器 - Nebula Launcher · 离线/正版双登录",
+  "productName": "星云启动器",
+  "version": "1.0.93",
+  "private": true,
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron .",
-    "pack": "electron-builder --win --dir",
-    "dist": "electron-builder --win"
+    "dev": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "postinstall": "electron-builder install-app-deps"
   },
-  "author": "Nebula",
-  "license": "MIT",
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "extract-zip": "^2.0.1",
+    "franc-min": "^6.2.0",
+    "msedge-tts": "^2.1.1",
+    "sherpa-onnx-node": "^2.0.1",
+    "sherpa-onnx-win-x64": "^2.0.1"
+  },
   "devDependencies": {
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },
-  "dependencies": {
-    "extract-zip": "^2.0.1"
-  },
   "build": {
-    "appId": "com.cm.blockvibe.launcher",
+    "appId": "com.example.nebula",
     "productName": "星云启动器",
-    "copyright": "MIT License · Nebula",
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
-      "src/**/*",
+      "src/main/**/*",
+      "src/renderer/**/*",
       "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/sherpa-onnx-node/**",
+      "**/node_modules/sherpa-onnx-win-x64/**",
+      "**/src/main/tts-local-worker.js",
+      "**/src/main/asr-local-worker.js"
     ],
     "extraResources": [
       {
+        "from": "resources/netcore",
+        "to": "netcore",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "resources/tools",
-        "to": "tools"
+        "to": "tools",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/tts-model",
+        "to": "tts-model",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/asr-model",
+        "to": "asr-model",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/asr-whisper",
+        "to": "asr-whisper",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/third-party-licenses",
+        "to": "third-party-licenses",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/main/mcp/mock-mcp-server.js",
+        "to": "mcp/mock-mcp-server.js"
+      },
+      {
+        "from": "resources/version-manifest.json",
+        "to": "version-manifest.json"
       }
     ],
     "win": {
-      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
-      ]
+      ],
+      "icon": "build/nebula-icon.ico",
+      "sign": null,
+      "signAndEditExecutable": false
     },
+    "artifactName": "nebula-launcher-setup-${version}.${ext}",
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
       "shortcutName": "星云启动器",
-      "artifactName": "Nebula-Launcher-${version}-setup.exe"
-    },
-    "portable": {
-      "artifactName": "Nebula-Launcher-${version}-portable.exe"
+      "installerIcon": "build/nebula-icon.ico",
+      "uninstallerIcon": "build/nebula-icon.ico",
+      "installerHeaderIcon": "build/nebula-icon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "include": "build/installer.nsh"
     }
   }
 }

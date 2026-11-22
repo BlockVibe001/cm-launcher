@@ -1,0 +1,14 @@
+星云启动器 · 离线英文语音识别模型
+
+模型：OpenAI Whisper base（sherpa-onnx 转换版）
+来源：https://github.com/k2-fsa/sherpa-onnx
+上游：https://github.com/openai/whisper
+许可：MIT
+
+文件：
+  base-encoder.int8.onnx
+  base-decoder.int8.onnx
+  base-tokens.txt
+
+说明：本模型随启动器一并分发，仅用于本机离线语音识别。
+MIT 许可证原文见安装目录 third-party-licenses/whisper-LICENSE.txt。

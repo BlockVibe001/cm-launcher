@@ -1,0 +1,13 @@
+星云启动器 · 离线中文语音识别模型
+
+模型：Paraformer 中文 ASR（sherpa-onnx 格式）
+来源：https://github.com/k2-fsa/sherpa-onnx
+上游模型页：https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+许可：Apache-2.0
+
+文件：
+  model.int8.onnx
+  tokens.txt
+
+说明：本模型随启动器一并分发，仅用于本机离线语音识别。
+Apache-2.0 许可证原文见安装目录 third-party-licenses/sherpa-onnx-LICENSE.txt。

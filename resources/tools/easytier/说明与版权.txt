@@ -19,16 +19,45 @@ EasyTier
   - 获取源码的方式：上面的仓库地址，标签 v2.6.4 即为本目录二进制对应的源码
 如需替换为本目录二进制的修改版，用户可自行编译并替换，启动器不做任何校验或锁定。
 
+同目录附带的驱动 / 运行库
+------------------------
+wintun.dll
+  来源：https://www.wintun.net/
+  版本：0.14.1
+  许可证：WireGuard 预编译二进制许可（允许随使用其 API 的软件一起分发，
+  禁止反编译或修改）。原文见 LICENSE-Wintun.txt。
+
+WinDivert64.sys
+  来源：https://github.com/basil00/WinDivert
+  版本：2.2
+  许可证：LGPL-3.0 / GPL-2.0 双许可，作为独立驱动使用。
+  原文见 LICENSE-WinDivert.txt。
+
+Npcap / Packet.dll
+  Npcap 不是开源软件，许可证明确禁止未经 Nmap 项目许可再分发。
+  因此本安装包不附带 Packet.dll，也不附带 Npcap 安装程序。
+  EasyTier 在 Windows 上需要系统里已有 Packet.dll：
+    - 如果 EasyTier 目录里自带 Packet.dll（例如玩家自己解压的官方包），直接使用；
+    - 否则启动器会从系统已安装的 Npcap 目录（如 C:\Windows\System32\Npcap）
+      通过 PATH 提供给 EasyTier。
+  未安装 Npcap 时联机会提示并给出下载地址：https://npcap.com/#download
+  安装时请勾选「Install Npcap in WinPcap API-compatible Mode」。
+  Npcap 许可证原文仅作说明，见安装目录 third-party-licenses/NPCAP-LICENSE.txt。
+
 文件清单
 --------
 easytier-core.exe   核心节点程序，官方 Windows x86_64 构建，未做任何修改
 easytier-cli.exe    配套命令行工具，用来读取节点 / 对端 / 路由状态
 wintun.dll          Wintun 驱动，创建虚拟网卡（TUN）必需
 WinDivert64.sys     EasyTier 随包附带的网络过滤驱动
-Packet.dll          WinDivert 配套运行库
+LICENSE.txt         LGPL-3.0 许可证原文
+LICENSE-WinDivert.txt  WinDivert 许可证原文
+LICENSE-Wintun.txt     Wintun 预编译二进制许可原文
+说明与版权.txt       本说明
 
-内置版本：v2.6.4
+内置版本：v2.6.4（easytier-core 自报 2.6.4-8428a89d）
 下载来源：https://github.com/EasyTier/EasyTier/releases/download/v2.6.4/easytier-windows-x86_64-v2.6.4.zip
+本目录 easytier-core.exe SHA-256：da7eb2d24b5416f3d3407636949e964a0750e3f9dc53a828cb6799a57ead445d
 
 用法说明
 --------
